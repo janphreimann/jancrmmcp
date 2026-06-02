@@ -17,6 +17,7 @@ const ISSUER_URL = new URL(
 );
 
 const app = express();
+app.set("trust proxy", 1); // Required for correct rate limiting behind Vercel's proxy
 app.use(express.json());
 
 // Health check (unauthenticated)
