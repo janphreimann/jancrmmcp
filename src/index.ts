@@ -7,15 +7,14 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { oauthProvider } from "./oauth.js";
 import { registerAllTools } from "./tools/index.js";
 
-function getBaseUrl(req?: import("express").Request): string {
-  if (process.env.SERVER_URL) return process.env.SERVER_URL;
-  // VERCEL_PROJECT_PRODUCTION_URL is the stable production domain (no deploy hash)
-  if (process.env.VERCEL_PROJECT_PRODUCTION_URL)
-    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  if (req) return `${req.protocol}://${req.get("host")}`;
-  return "http://localhost:3000";
-}
+// Issuer URL must be known at startup (not per-request) because express-rate-limit
+// inside mcpAuthRouter must be created once, not per request (Vercel serverless constraint).
+const ISSUER_URL = new URL(
+  process.env.SERVER_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : `http://localhost:${process.env.PORT ?? 3000}`)
+);
 
 const app = express();
 app.use(express.json());
@@ -25,12 +24,8 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "crm-mcp-server" });
 });
 
-// OAuth endpoints (/.well-known/oauth-authorization-server, /oauth/authorize, /oauth/token, /oauth/register)
-// Must be mounted before the MCP route
-app.use((req, res, next) => {
-  const issuerUrl = new URL(getBaseUrl(req));
-  return mcpAuthRouter({ provider: oauthProvider, issuerUrl })(req, res, next);
-});
+// OAuth endpoints — router created ONCE at startup to satisfy express-rate-limit constraints
+app.use(mcpAuthRouter({ provider: oauthProvider, issuerUrl: ISSUER_URL }));
 
 // MCP endpoint — protected by OAuth Bearer token
 app.all(

@@ -115,10 +115,12 @@ function authPage(opts: {
     <p class="sub"><span class="client">${opts.clientName ?? "Claude"}</span> möchte auf dein CRM zugreifen und Kontakte, Deals und Aufgaben verwalten.</p>
     ${opts.error ? `<div class="error">${opts.error}</div>` : ""}
     <form method="POST">
+      <input type="hidden" name="response_type" value="code">
+      <input type="hidden" name="code_challenge_method" value="S256">
       <input type="hidden" name="redirect_uri" value="${opts.redirectUri}">
       <input type="hidden" name="code_challenge" value="${opts.codeChallenge}">
       <input type="hidden" name="client_id" value="${encodeURIComponent(opts.clientId)}">
-      ${opts.state ? `<input type="hidden" name="state" value="${opts.state}">` : ""}
+      <input type="hidden" name="state" value="${opts.state ?? ""}">
       ${needsPin
         ? `<label for="pin">PIN</label>
            <input type="password" id="pin" name="pin" placeholder="Deine OAUTH_PIN eingeben" autocomplete="off" autofocus required>`
@@ -144,8 +146,15 @@ export const oauthProvider: OAuthServerProvider = {
     res: Response
   ): Promise<void> {
     // Access the underlying Express request (res.req is set by Express internally)
-    const req = (res as unknown as { req: { method: string; body: Record<string, string> } }).req;
+    const req = (res as unknown as {
+      req: { method: string; body: Record<string, string>; query: Record<string, string> };
+    }).req;
     const pin = process.env.OAUTH_PIN;
+
+    // state may come from params (GET flow) or from the POST body (form re-submission).
+    // Always prefer params.state, fall back to what was POSTed or queried.
+    const state: string | undefined =
+      params.state ?? req.body?.state ?? req.query?.state ?? undefined;
 
     if (req.method === "POST") {
       if (pin) {
@@ -157,7 +166,7 @@ export const oauthProvider: OAuthServerProvider = {
               redirectUri: params.redirectUri,
               codeChallenge: params.codeChallenge,
               clientId: client.client_id,
-              state: params.state,
+              state,
               error: "Falsche PIN. Bitte erneut versuchen.",
             })
           );
@@ -168,7 +177,8 @@ export const oauthProvider: OAuthServerProvider = {
       const code = issueAuthCode(client.client_id, params.codeChallenge, params.redirectUri);
       const url = new URL(params.redirectUri);
       url.searchParams.set("code", code);
-      if (params.state) url.searchParams.set("state", params.state);
+      // state is required by Claude.ai — always include it if present
+      if (state) url.searchParams.set("state", state);
       res.redirect(url.toString());
     } else {
       res.send(
@@ -177,7 +187,7 @@ export const oauthProvider: OAuthServerProvider = {
           redirectUri: params.redirectUri,
           codeChallenge: params.codeChallenge,
           clientId: client.client_id,
-          state: params.state,
+          state,
         })
       );
     }
