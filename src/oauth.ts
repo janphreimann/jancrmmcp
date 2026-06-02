@@ -179,6 +179,7 @@ export const oauthProvider: OAuthServerProvider = {
       url.searchParams.set("code", code);
       // state is required by Claude.ai — always include it if present
       if (state) url.searchParams.set("state", state);
+      console.log("[oauth] authorize: redirecting with code length:", code.length, "state:", state);
       res.redirect(url.toString());
     } else {
       res.send(
@@ -197,11 +198,16 @@ export const oauthProvider: OAuthServerProvider = {
     _client: OAuthClientInformationFull,
     authorizationCode: string
   ): Promise<string> {
+    console.log("[oauth] challengeForAuthorizationCode called, code length:", authorizationCode.length);
     const data = hmacVerify(authorizationCode);
-    if (!data) throw new Error("Invalid authorization code");
+    if (!data) {
+      console.error("[oauth] challengeForAuthorizationCode: hmacVerify failed");
+      throw new Error("Invalid authorization code");
+    }
     const parsed = JSON.parse(data) as { t: string; ch: string; exp: number };
     if (parsed.t !== "code") throw new Error("Invalid authorization code type");
     if (Date.now() > parsed.exp) throw new Error("Authorization code expired");
+    console.log("[oauth] challengeForAuthorizationCode: returning challenge");
     return parsed.ch;
   },
 
@@ -209,13 +215,20 @@ export const oauthProvider: OAuthServerProvider = {
     client: OAuthClientInformationFull,
     authorizationCode: string
   ): Promise<OAuthTokens> {
+    console.log("[oauth] exchangeAuthorizationCode called");
     const data = hmacVerify(authorizationCode);
-    if (!data) throw new Error("Invalid authorization code");
+    if (!data) {
+      console.error("[oauth] exchangeAuthorizationCode: hmacVerify failed");
+      throw new Error("Invalid authorization code");
+    }
     const parsed = JSON.parse(data) as { t: string; c: string; exp: number };
     if (parsed.t !== "code") throw new Error("Invalid authorization code type");
     if (Date.now() > parsed.exp) throw new Error("Authorization code expired");
-    if (parsed.c !== client.client_id) throw new Error("client_id mismatch");
-
+    if (parsed.c !== client.client_id) {
+      console.error("[oauth] client_id mismatch — parsed.c length:", parsed.c.length, "client.client_id length:", client.client_id.length);
+      throw new Error("client_id mismatch");
+    }
+    console.log("[oauth] exchangeAuthorizationCode: success, issuing token");
     return {
       access_token: issueAccessToken(client.client_id),
       token_type: "Bearer",
@@ -224,6 +237,7 @@ export const oauthProvider: OAuthServerProvider = {
   },
 
   async exchangeRefreshToken(client: OAuthClientInformationFull): Promise<OAuthTokens> {
+    console.log("[oauth] exchangeRefreshToken called");
     return {
       access_token: issueAccessToken(client.client_id),
       token_type: "Bearer",
@@ -232,11 +246,16 @@ export const oauthProvider: OAuthServerProvider = {
   },
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
+    console.log("[oauth] verifyAccessToken called, token length:", token.length);
     const data = hmacVerify(token);
-    if (!data) throw new Error("Invalid access token");
+    if (!data) {
+      console.error("[oauth] verifyAccessToken: hmacVerify failed");
+      throw new Error("Invalid access token");
+    }
     const parsed = JSON.parse(data) as { t: string; c: string; exp: number };
     if (parsed.t !== "token") throw new Error("Invalid token type");
     if (Math.floor(Date.now() / 1000) > parsed.exp) throw new Error("Access token expired");
+    console.log("[oauth] verifyAccessToken: success");
     return {
       token,
       clientId: parsed.c,
