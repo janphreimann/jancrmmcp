@@ -9,6 +9,9 @@ import { registerAllTools } from "./tools/index.js";
 
 function getBaseUrl(req?: import("express").Request): string {
   if (process.env.SERVER_URL) return process.env.SERVER_URL;
+  // VERCEL_PROJECT_PRODUCTION_URL is the stable production domain (no deploy hash)
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL)
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
   if (req) return `${req.protocol}://${req.get("host")}`;
   return "http://localhost:3000";
