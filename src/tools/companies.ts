@@ -3,23 +3,23 @@ import { supabase, ORG_ID } from "../supabase.js";
 
 export const searchCompaniesSchema = z.object({
   query: z.string().optional().describe("Search in company name"),
-  company_type: z.string().optional(),
-  rating: z.string().optional(),
+  industry: z.string().optional().describe("Filter by industry (e.g. Technology, Financial Services)"),
+  source: z.string().optional().describe("Filter by source (e.g. Referral, Conference / Event)"),
   limit: z.number().int().min(1).max(100).default(25),
 });
 
 export async function searchCompanies(args: z.infer<typeof searchCompaniesSchema>) {
   let q = supabase
     .from("companies")
-    .select("id, name, company_type, rating, website, address_city, address_country")
+    .select("id, name, industry, website, address_city, address_country, source")
     .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .order("name")
     .limit(args.limit);
 
   if (args.query) q = q.ilike("name", `%${args.query}%`);
-  if (args.company_type) q = q.eq("company_type", args.company_type);
-  if (args.rating) q = q.eq("rating", args.rating);
+  if (args.industry) q = q.eq("industry", args.industry);
+  if (args.source) q = q.eq("source", args.source);
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
@@ -62,11 +62,18 @@ export async function getCompany(args: z.infer<typeof getCompanySchema>) {
 
 export const createCompanySchema = z.object({
   name: z.string().min(1),
-  company_type: z.string().optional().nullable(),
+  short_name: z.string().optional().nullable(),
+  industry: z.enum(["Technology", "Financial Services", "Healthcare", "Media & Entertainment", "Retail & Consumer", "Industrials", "Real Estate", "Energy", "Education", "Transport & Logistics", "Non-profit / NGO", "Other"]).optional().nullable(),
+  sub_industry: z.string().optional().nullable(),
   website: z.string().optional().nullable(),
+  linkedin_url: z.string().optional().nullable(),
+  founded_year: z.number().int().optional().nullable(),
+  employee_range: z.enum(["1–10", "11–50", "51–200", "201–1,000", "> 1,000", "Unknown"]).optional().nullable(),
   address_city: z.string().optional().nullable(),
   address_country: z.string().optional().nullable(),
-  rating: z.string().optional().nullable(),
+  source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
+  do_not_contact: z.boolean().optional(),
+  do_not_contact_reason: z.string().optional().nullable(),
   tag_ids: z.array(z.string().uuid()).optional(),
   description: z.string().optional().nullable(),
 });
@@ -91,13 +98,20 @@ export async function createCompany(args: z.infer<typeof createCompanySchema>) {
 export const updateCompanySchema = z.object({
   id: z.string().uuid(),
   name: z.string().optional(),
-  company_type: z.string().optional().nullable(),
+  short_name: z.string().optional().nullable(),
+  industry: z.enum(["Technology", "Financial Services", "Healthcare", "Media & Entertainment", "Retail & Consumer", "Industrials", "Real Estate", "Energy", "Education", "Transport & Logistics", "Non-profit / NGO", "Other"]).optional().nullable(),
+  sub_industry: z.string().optional().nullable(),
   website: z.string().optional().nullable(),
-  rating: z.string().optional().nullable(),
+  linkedin_url: z.string().optional().nullable(),
+  founded_year: z.number().int().optional().nullable(),
+  employee_range: z.enum(["1–10", "11–50", "51–200", "201–1,000", "> 1,000", "Unknown"]).optional().nullable(),
   address_city: z.string().optional().nullable(),
   address_country: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
+  source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
   internal_notes: z.string().optional().nullable(),
+  do_not_contact: z.boolean().optional(),
+  do_not_contact_reason: z.string().optional().nullable(),
 });
 
 export async function updateCompany(args: z.infer<typeof updateCompanySchema>) {

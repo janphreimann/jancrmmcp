@@ -5,8 +5,8 @@ export const searchContactsSchema = z.object({
   query: z.string().optional().describe("Text to search across first_name, last_name, email"),
   company_id: z.string().uuid().optional().describe("Filter by company UUID"),
   tag_ids: z.array(z.string().uuid()).optional().describe("Filter by tag UUIDs"),
-  contact_type: z.string().optional(),
-  rating: z.enum(["A", "B", "C", "D"]).optional(),
+  source: z.string().optional().describe("Filter by source (e.g. Referral, Conference / Event)"),
+  do_not_contact: z.boolean().optional().describe("Filter by do-not-contact flag"),
   limit: z.number().int().min(1).max(100).default(25),
 });
 
@@ -14,7 +14,7 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
   let q = supabase
     .from("contacts")
     .select(
-      "id, first_name, last_name, email_1, phone_1, job_title, company_id, rating, contact_type, companies:company_id(id, name)"
+      "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, do_not_contact, companies:company_id(id, name)"
     )
     .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
@@ -27,8 +27,8 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
     );
   }
   if (args.company_id) q = q.eq("company_id", args.company_id);
-  if (args.contact_type) q = q.eq("contact_type", args.contact_type);
-  if (args.rating) q = q.eq("rating", args.rating);
+  if (args.source) q = q.eq("source", args.source);
+  if (args.do_not_contact !== undefined) q = q.eq("do_not_contact", args.do_not_contact);
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
@@ -78,12 +78,24 @@ export async function getContact(args: z.infer<typeof getContactSchema>) {
 export const createContactSchema = z.object({
   first_name: z.string().min(1),
   last_name: z.string().min(1),
+  salutation: z.enum(["Mr.", "Ms.", "Dr.", "Prof.", "Prof. Dr."]).optional().nullable(),
+  suffix: z.string().optional().nullable(),
   email_1: z.string().email().optional().nullable(),
+  email_1_label: z.enum(["Work", "Personal", "Other"]).optional().nullable(),
+  email_2: z.string().email().optional().nullable(),
+  email_2_label: z.enum(["Work", "Personal", "Other"]).optional().nullable(),
   phone_1: z.string().optional().nullable(),
+  phone_1_label: z.enum(["Mobile", "Work", "Home", "Other"]).optional().nullable(),
+  phone_2: z.string().optional().nullable(),
+  phone_2_label: z.enum(["Mobile", "Work", "Home", "Other"]).optional().nullable(),
+  phone_3: z.string().optional().nullable(),
   job_title: z.string().optional().nullable(),
+  department: z.string().optional().nullable(),
   company_id: z.string().uuid().optional().nullable(),
-  contact_type: z.string().optional().nullable(),
-  rating: z.enum(["A", "B", "C", "D"]).optional().nullable(),
+  linkedin_url: z.string().optional().nullable(),
+  source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
+  do_not_contact: z.boolean().optional(),
+  do_not_contact_reason: z.string().optional().nullable(),
   tag_ids: z.array(z.string().uuid()).optional(),
   notes: z.string().optional().nullable().describe("Internal notes"),
 });
@@ -109,14 +121,25 @@ export const updateContactSchema = z.object({
   id: z.string().uuid(),
   first_name: z.string().optional(),
   last_name: z.string().optional(),
+  salutation: z.enum(["Mr.", "Ms.", "Dr.", "Prof.", "Prof. Dr."]).optional().nullable(),
+  suffix: z.string().optional().nullable(),
   email_1: z.string().email().optional().nullable(),
+  email_1_label: z.enum(["Work", "Personal", "Other"]).optional().nullable(),
+  email_2: z.string().email().optional().nullable(),
+  email_2_label: z.enum(["Work", "Personal", "Other"]).optional().nullable(),
   phone_1: z.string().optional().nullable(),
+  phone_1_label: z.enum(["Mobile", "Work", "Home", "Other"]).optional().nullable(),
+  phone_2: z.string().optional().nullable(),
+  phone_2_label: z.enum(["Mobile", "Work", "Home", "Other"]).optional().nullable(),
+  phone_3: z.string().optional().nullable(),
   job_title: z.string().optional().nullable(),
+  department: z.string().optional().nullable(),
   company_id: z.string().uuid().optional().nullable(),
-  contact_type: z.string().optional().nullable(),
-  rating: z.enum(["A", "B", "C", "D"]).optional().nullable(),
+  linkedin_url: z.string().optional().nullable(),
+  source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
   internal_notes: z.string().optional().nullable(),
   do_not_contact: z.boolean().optional(),
+  do_not_contact_reason: z.string().optional().nullable(),
 });
 
 export async function updateContact(args: z.infer<typeof updateContactSchema>) {

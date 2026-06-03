@@ -34,12 +34,3 @@ export const INTERACTION_TYPES: [string, ...string[]] = [
   "Other",
 ];
 
-export const TASK_TYPES: [string, ...string[]] = [
-  "Follow-up",
-  "Prepare Document",
-  "Schedule Call",
-  "Schedule Meeting",
-  "Analysis",
-  "Reporting",
-  "Other",
-];

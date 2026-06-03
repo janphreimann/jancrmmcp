@@ -31,7 +31,7 @@ function ok(result: unknown) {
 export function registerAllTools(server: McpServer) {
   server.tool(
     "search_contacts",
-    "Search contacts by name, email, company, type, or rating",
+    "Search contacts by name, email, company, source, or do-not-contact flag",
     searchContactsSchema.shape,
     async (args) => ok(await searchContacts(args as Parameters<typeof searchContacts>[0]))
   );
@@ -59,7 +59,7 @@ export function registerAllTools(server: McpServer) {
 
   server.tool(
     "search_companies",
-    "Search companies by name, type, or rating",
+    "Search companies by name, industry, or source",
     searchCompaniesSchema.shape,
     async (args) => ok(await searchCompanies(args as Parameters<typeof searchCompanies>[0]))
   );
@@ -101,7 +101,7 @@ export function registerAllTools(server: McpServer) {
 
   server.tool(
     "update_deal",
-    "Update a deal — stage, priority, description, close dates",
+    "Update a deal — stage, priority, description, volumes, dates",
     updateDealSchema.shape,
     async (args) => ok(await updateDeal(args as Parameters<typeof updateDeal>[0]))
   );
@@ -115,7 +115,7 @@ export function registerAllTools(server: McpServer) {
 
   server.tool(
     "create_interaction",
-    "Log an interaction (call, meeting, email) linked to contacts, companies, or deals",
+    "Log an interaction (call, meeting, email) linked to contacts, companies, or deals. Supports internal_notes and sentiment.",
     createInteractionSchema.shape,
     async (args) => ok(await createInteraction(args as Parameters<typeof createInteraction>[0]))
   );

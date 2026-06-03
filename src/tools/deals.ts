@@ -52,10 +52,12 @@ export const createDealSchema = z.object({
   priority: z.enum(["High", "Medium", "Low"]).default("Medium"),
   description: z.string().optional().nullable(),
   target_volume: z.number().optional().nullable(),
+  invested_volume: z.number().optional().nullable(),
   currency: z.enum(["EUR", "USD", "GBP", "CHF", "JPY"]).default("EUR"),
   main_contact_id: z.string().uuid().optional().nullable(),
   contact_ids: z.array(z.string().uuid()).default([]),
   company_ids: z.array(z.string().uuid()).default([]),
+  start_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
   expected_close_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
 });
 
@@ -95,6 +97,8 @@ export const updateDealSchema = z.object({
   priority: z.enum(["High", "Medium", "Low"]).optional(),
   description: z.string().optional().nullable(),
   target_volume: z.number().optional().nullable(),
+  invested_volume: z.number().optional().nullable(),
+  start_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
   expected_close_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
   actual_close_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
   deal_type: z.string().optional(),

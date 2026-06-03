@@ -8,11 +8,11 @@ export const createInteractionSchema = z.object({
   title: z.string().min(1),
   content: z.string().optional().nullable().describe("Notes / summary of the interaction"),
   next_steps: z.string().optional().nullable(),
+  internal_notes: z.string().optional().nullable(),
+  sentiment: z.string().optional().nullable().describe("e.g. Positive, Neutral, Negative"),
   contact_ids: z.array(z.string().uuid()).default([]),
   company_ids: z.array(z.string().uuid()).default([]),
   deal_id: z.string().uuid().optional().nullable(),
-  time_from: z.string().optional().nullable().describe("HH:MM"),
-  time_to: z.string().optional().nullable().describe("HH:MM"),
   duration_min: z.number().int().optional().nullable(),
 });
 
