@@ -23,6 +23,17 @@ import {
   addTagToEntitySchema, addTagToEntity,
   getPipelineStatsSchema, getPipelineStats,
 } from "./tags.js";
+import {
+  listFoldersSchema, listFolders,
+  createFolderSchema, createFolder,
+  renameFolderSchema, renameFolder,
+  listDocumentsSchema, listDocuments,
+  getDocumentContentSchema, getDocumentContent,
+  createTextDocumentSchema, createTextDocument,
+  updateDocumentContentSchema, updateDocumentContent,
+  updateDocumentSchema, updateDocument,
+  deleteDocumentSchema, deleteDocument,
+} from "./documents.js";
 
 function ok(result: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
@@ -139,5 +150,70 @@ export function registerAllTools(server: McpServer) {
     "Get pipeline statistics: deal counts by stage, total contacts, companies, open tasks",
     getPipelineStatsSchema.shape,
     async () => ok(await getPipelineStats())
+  );
+
+  // ─── Documents ───────────────────────────────────────────────────────────
+
+  server.tool(
+    "list_folders",
+    "List all document folders (flat list with parent_folder_id for hierarchy)",
+    listFoldersSchema.shape,
+    async () => ok(await listFolders())
+  );
+
+  server.tool(
+    "create_folder",
+    "Create a new document folder. Optionally nest it under a parent folder.",
+    createFolderSchema.shape,
+    async (args) => ok(await createFolder(args as Parameters<typeof createFolder>[0]))
+  );
+
+  server.tool(
+    "rename_folder",
+    "Rename an existing document folder",
+    renameFolderSchema.shape,
+    async (args) => ok(await renameFolder(args as Parameters<typeof renameFolder>[0]))
+  );
+
+  server.tool(
+    "list_documents",
+    "List documents with optional folder filter and text search. Omit folder_id to get all, pass null to get root-level only.",
+    listDocumentsSchema.shape,
+    async (args) => ok(await listDocuments(args as Parameters<typeof listDocuments>[0]))
+  );
+
+  server.tool(
+    "get_document_content",
+    "Get a document's metadata and text content (for .md, .txt, .csv, .json, etc.). Returns a signed download URL for all file types.",
+    getDocumentContentSchema.shape,
+    async (args) => ok(await getDocumentContent(args as Parameters<typeof getDocumentContent>[0]))
+  );
+
+  server.tool(
+    "create_text_document",
+    "Create a new text document (markdown, txt, csv, json, …) and upload it to the CRM. Optionally place it in a folder and link it to a CRM entity.",
+    createTextDocumentSchema.shape,
+    async (args) => ok(await createTextDocument(args as Parameters<typeof createTextDocument>[0]))
+  );
+
+  server.tool(
+    "update_document_content",
+    "Overwrite the text content of an existing document in-place",
+    updateDocumentContentSchema.shape,
+    async (args) => ok(await updateDocumentContent(args as Parameters<typeof updateDocumentContent>[0]))
+  );
+
+  server.tool(
+    "update_document",
+    "Update a document's metadata: rename, change description, move to a different folder, or re-link to a CRM entity",
+    updateDocumentSchema.shape,
+    async (args) => ok(await updateDocument(args as Parameters<typeof updateDocument>[0]))
+  );
+
+  server.tool(
+    "delete_document",
+    "Soft-delete a document (moves it to trash, recoverable from the CRM UI)",
+    deleteDocumentSchema.shape,
+    async (args) => ok(await deleteDocument(args as Parameters<typeof deleteDocument>[0]))
   );
 }
