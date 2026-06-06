@@ -30,6 +30,7 @@ import {
   listDocumentsSchema, listDocuments,
   getDocumentContentSchema, getDocumentContent,
   createTextDocumentSchema, createTextDocument,
+  uploadBinaryDocumentSchema, uploadBinaryDocument,
   updateDocumentContentSchema, updateDocumentContent,
   updateDocumentSchema, updateDocument,
   deleteDocumentSchema, deleteDocument,
@@ -194,6 +195,13 @@ export function registerAllTools(server: McpServer) {
     "Create a new text document (markdown, txt, csv, json, …) and upload it to the CRM. Optionally place it in a folder and link it to a CRM entity.",
     createTextDocumentSchema.shape,
     async (args) => ok(await createTextDocument(args as Parameters<typeof createTextDocument>[0]))
+  );
+
+  server.tool(
+    "upload_binary_document",
+    "Upload a binary file (PDF, PPTX, XLSX, image, etc.) to the CRM as a Base64-encoded payload. Optionally place it in a folder and link it to a CRM entity. Returns the document ID and a signed download URL.",
+    uploadBinaryDocumentSchema.shape,
+    async (args) => ok(await uploadBinaryDocument(args as Parameters<typeof uploadBinaryDocument>[0]))
   );
 
   server.tool(

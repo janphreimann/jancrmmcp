@@ -189,6 +189,100 @@ export async function createTextDocument(args: z.infer<typeof createTextDocument
   return { id: data.id, message: `Document "${file_name}" created successfully` };
 }
 
+const binaryContentTypeMap: Record<string, string> = {
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  ico: "image/x-icon",
+  bmp: "image/bmp",
+  tiff: "image/tiff",
+  zip: "application/zip",
+  tar: "application/x-tar",
+  gz: "application/gzip",
+  mp4: "video/mp4",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+  webm: "video/webm",
+};
+
+export const uploadBinaryDocumentSchema = z.object({
+  file_name: z.string().min(1).describe(
+    "File name including extension, e.g. 'report.pdf' or 'slides.pptx'"
+  ),
+  file_data: z.string().min(1).describe(
+    "Base64-encoded file contents (standard Base64, no data-URI prefix)"
+  ),
+  mime_type: z.string().optional().nullable().describe(
+    "MIME type override, e.g. 'application/pdf'. Auto-detected from extension when omitted."
+  ),
+  description: z.string().optional().nullable().describe("Optional short description"),
+  folder_id: z.string().uuid().optional().nullable().describe("UUID of the folder to place this document in"),
+  entity_type: entityTypeEnum.default("none").describe(
+    "Optional CRM entity to link this document to"
+  ),
+  entity_id: z.string().uuid().optional().nullable().describe("UUID of the linked entity"),
+});
+
+export async function uploadBinaryDocument(args: z.infer<typeof uploadBinaryDocumentSchema>) {
+  const { file_name, file_data, mime_type, description, folder_id, entity_type, entity_id } = args;
+
+  const buffer = Buffer.from(file_data, "base64");
+
+  const safeName = file_name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const folderPath = entity_type === "none" ? "general" : entity_type;
+  const idPart = entity_id || "_none_";
+  const storagePath = `${folderPath}/${idPart}/${randomUUID()}_${safeName}`;
+
+  const ext = (file_name.split(".").pop() || "").toLowerCase();
+  const contentType = mime_type || binaryContentTypeMap[ext] || "application/octet-stream";
+
+  const { error: upErr } = await supabase.storage
+    .from("documents")
+    .upload(storagePath, buffer, { contentType, upsert: false });
+  if (upErr) throw new Error(upErr.message);
+
+  const insert: Record<string, unknown> = {
+    file_name,
+    file_url: storagePath,
+    file_size: buffer.byteLength,
+    description: description ?? null,
+    folder_id: folder_id ?? null,
+    contact_id: entity_type === "contact" ? entity_id : null,
+    company_id: entity_type === "company" ? entity_id : null,
+    deal_id: entity_type === "deal" ? entity_id : null,
+    interaction_id: entity_type === "interaction" ? entity_id : null,
+    calendar_event_id: entity_type === "calendar_event" ? entity_id : null,
+    task_id: entity_type === "task" ? entity_id : null,
+  };
+
+  const { data, error } = await supabase.from("documents").insert(insert).select("id").single();
+  if (error) throw new Error(error.message);
+
+  const { data: urlData, error: urlErr } = await supabase.storage
+    .from("documents")
+    .createSignedUrl(storagePath, 3600);
+  if (urlErr) throw new Error(urlErr.message);
+
+  return {
+    id: data.id,
+    file_name,
+    file_size: buffer.byteLength,
+    signed_url: urlData.signedUrl,
+    message: `Binary document "${file_name}" uploaded successfully`,
+  };
+}
+
 export const updateDocumentContentSchema = z.object({
   id: z.string().uuid().describe("Document UUID to overwrite"),
   content: z.string().describe("New text content"),
