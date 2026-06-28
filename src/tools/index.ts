@@ -17,6 +17,7 @@ import {
   updateDealSchema, updateDeal,
 } from "./deals.js";
 import { createTaskSchema, createTask } from "./tasks.js";
+import { createEmailDraftSchema, createEmailDraft } from "./mail.js";
 import { createInteractionSchema, createInteraction } from "./interactions.js";
 import {
   listTagsSchema, listTags,
@@ -123,6 +124,13 @@ export function registerAllTools(server: McpServer) {
     "Create a task optionally linked to a contact, company, or deal",
     createTaskSchema.shape,
     async (args) => ok(await createTask(args as Parameters<typeof createTask>[0]))
+  );
+
+  server.tool(
+    "create_email_draft",
+    "Save an email draft to the Drafts folder via IMAP. To, CC, subject and body are all optional — useful for pre-filling a draft the user will finish later.",
+    createEmailDraftSchema.shape,
+    async (args) => ok(await createEmailDraft(args as Parameters<typeof createEmailDraft>[0]))
   );
 
   server.tool(
