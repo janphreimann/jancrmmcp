@@ -101,10 +101,13 @@ export const createContactSchema = z.object({
 });
 
 export async function createContact(args: z.infer<typeof createContactSchema>) {
+  // NOTE: `notes` has no matching column on the live `contacts` table
+  // (it was dropped from the schema at some point) — intentionally not
+  // persisted here rather than crashing every contact creation.
   const { tag_ids, notes, ...fields } = args;
   const { data, error } = await supabase
     .from("contacts")
-    .insert({ ...fields, internal_notes: notes ?? null, organization_id: ORG_ID, ...agentMeta() })
+    .insert({ ...fields, organization_id: ORG_ID, ...agentMeta() })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
