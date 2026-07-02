@@ -44,7 +44,7 @@ function ok(result: unknown) {
 export function registerAllTools(server: McpServer) {
   server.tool(
     "search_contacts",
-    "Search contacts by name, email, company, source, or do-not-contact flag",
+    "Search contacts by name, email, company, or source",
     searchContactsSchema.shape,
     async (args) => ok(await searchContacts(args as Parameters<typeof searchContacts>[0]))
   );

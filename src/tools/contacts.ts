@@ -6,7 +6,6 @@ export const searchContactsSchema = z.object({
   company_id: z.string().uuid().optional().describe("Filter by company UUID"),
   tag_ids: z.array(z.string().uuid()).optional().describe("Filter by tag UUIDs"),
   source: z.string().optional().describe("Filter by source (e.g. Referral, Conference / Event)"),
-  do_not_contact: z.boolean().optional().describe("Filter by do-not-contact flag"),
   limit: z.number().int().min(1).max(100).default(25),
 });
 
@@ -14,7 +13,7 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
   let q = supabase
     .from("contacts")
     .select(
-      "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, do_not_contact, companies:company_id(id, name)"
+      "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, companies:company_id(id, name)"
     )
     .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
@@ -28,7 +27,6 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
   }
   if (args.company_id) q = q.eq("company_id", args.company_id);
   if (args.source) q = q.eq("source", args.source);
-  if (args.do_not_contact !== undefined) q = q.eq("do_not_contact", args.do_not_contact);
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
@@ -94,17 +92,11 @@ export const createContactSchema = z.object({
   company_id: z.string().uuid().optional().nullable(),
   linkedin_url: z.string().optional().nullable(),
   source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
-  do_not_contact: z.boolean().optional(),
-  do_not_contact_reason: z.string().optional().nullable(),
   tag_ids: z.array(z.string().uuid()).optional(),
-  notes: z.string().optional().nullable().describe("Internal notes"),
 });
 
 export async function createContact(args: z.infer<typeof createContactSchema>) {
-  // NOTE: `notes` has no matching column on the live `contacts` table
-  // (it was dropped from the schema at some point) — intentionally not
-  // persisted here rather than crashing every contact creation.
-  const { tag_ids, notes, ...fields } = args;
+  const { tag_ids, ...fields } = args;
   const { data, error } = await supabase
     .from("contacts")
     .insert({ ...fields, organization_id: ORG_ID, ...agentMeta() })
@@ -140,9 +132,6 @@ export const updateContactSchema = z.object({
   company_id: z.string().uuid().optional().nullable(),
   linkedin_url: z.string().optional().nullable(),
   source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
-  internal_notes: z.string().optional().nullable(),
-  do_not_contact: z.boolean().optional(),
-  do_not_contact_reason: z.string().optional().nullable(),
 });
 
 export async function updateContact(args: z.infer<typeof updateContactSchema>) {
