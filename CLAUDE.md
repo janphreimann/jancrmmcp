@@ -1,8 +1,12 @@
 # crm-mcp-server
 
-MCP server exposing CRM tools (contacts, companies, deals, tasks, interactions,
-documents, folders) to AI agents (Claude, claude.ai connector) backed by the
-same Supabase project as the main CRM webapp (`../Jan CRM`).
+MCP server exposing CRM tools (contacts, companies, deals, tasks, documents,
+folders) to AI agents (Claude, claude.ai connector) backed by the same
+Supabase project as the main CRM webapp (`../Jan CRM`).
+
+Interactions are intentionally **not** creatable via this server — logging a
+call/meeting/email as an interaction is a user-only action in the CRM UI.
+Do not add a `create_interaction` tool back without explicit sign-off.
 
 ## Agent-provenance rule (always apply, no exceptions)
 
