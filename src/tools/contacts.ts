@@ -92,6 +92,7 @@ export const createContactSchema = z.object({
   company_id: z.string().uuid().optional().nullable(),
   linkedin_url: z.string().optional().nullable(),
   source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
+  notes: z.string().optional().nullable(),
   tag_ids: z.array(z.string().uuid()).optional(),
 });
 
@@ -132,6 +133,7 @@ export const updateContactSchema = z.object({
   company_id: z.string().uuid().optional().nullable(),
   linkedin_url: z.string().optional().nullable(),
   source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
+  notes: z.string().optional().nullable(),
 });
 
 export async function updateContact(args: z.infer<typeof updateContactSchema>) {

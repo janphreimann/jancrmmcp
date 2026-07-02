@@ -70,6 +70,7 @@ export const createCompanySchema = z.object({
   address_country: z.string().optional().nullable(),
   tag_ids: z.array(z.string().uuid()).optional(),
   description: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
 });
 
 export async function createCompany(args: z.infer<typeof createCompanySchema>) {
@@ -101,6 +102,7 @@ export const updateCompanySchema = z.object({
   address_city: z.string().optional().nullable(),
   address_country: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
 });
 
 export async function updateCompany(args: z.infer<typeof updateCompanySchema>) {
