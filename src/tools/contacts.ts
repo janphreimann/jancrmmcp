@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { supabase, ORG_ID } from "../supabase.js";
+import { supabase, ORG_ID, agentMeta } from "../supabase.js";
 
 export const searchContactsSchema = z.object({
   query: z.string().optional().describe("Text to search across first_name, last_name, email"),
@@ -104,7 +104,7 @@ export async function createContact(args: z.infer<typeof createContactSchema>) {
   const { tag_ids, notes, ...fields } = args;
   const { data, error } = await supabase
     .from("contacts")
-    .insert({ ...fields, internal_notes: notes ?? null, organization_id: ORG_ID })
+    .insert({ ...fields, internal_notes: notes ?? null, organization_id: ORG_ID, ...agentMeta() })
     .select("id")
     .single();
   if (error) throw new Error(error.message);

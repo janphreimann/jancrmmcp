@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { supabase, ORG_ID } from "../supabase.js";
+import { supabase, ORG_ID, agentMeta } from "../supabase.js";
 
 export const searchCompaniesSchema = z.object({
   query: z.string().optional().describe("Search in company name"),
@@ -82,7 +82,7 @@ export async function createCompany(args: z.infer<typeof createCompanySchema>) {
   const { tag_ids, ...fields } = args;
   const { data, error } = await supabase
     .from("companies")
-    .insert({ ...fields, organization_id: ORG_ID })
+    .insert({ ...fields, organization_id: ORG_ID, ...agentMeta() })
     .select("id")
     .single();
   if (error) throw new Error(error.message);

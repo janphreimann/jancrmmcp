@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { supabase, ORG_ID } from "../supabase.js";
+import { supabase, ORG_ID, agentMeta } from "../supabase.js";
 import { INTERACTION_TYPES } from "../constants.js";
 
 export const createInteractionSchema = z.object({
@@ -20,7 +20,7 @@ export async function createInteraction(args: z.infer<typeof createInteractionSc
   const { contact_ids, company_ids, ...fields } = args;
   const { data, error } = await supabase
     .from("interactions")
-    .insert({ ...fields, organization_id: ORG_ID })
+    .insert({ ...fields, organization_id: ORG_ID, ...agentMeta() })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
