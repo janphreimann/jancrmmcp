@@ -30,7 +30,6 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
       company_id: c.company_id,
       companies: c.company_id ? { id: c.company_id, name: c.company_name } : null,
       source: c.source,
-      do_not_contact: c.do_not_contact,
       match_score: c.match_score,
     }));
 
