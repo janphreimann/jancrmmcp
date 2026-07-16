@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { supabase, ORG_ID } from "../supabase.js";
+import { supabase, ORG_ID, agentMeta } from "../supabase.js";
 import { STAGE_TO_DB, STAGE_FROM_DB, DEAL_STAGES } from "../constants.js";
 
 export const searchDealsSchema = z.object({
@@ -124,6 +124,7 @@ export async function createDeal(args: z.infer<typeof createDealSchema>) {
       ...fields,
       stage: STAGE_TO_DB[stage] ?? "identified",
       organization_id: ORG_ID,
+      ...agentMeta(),
     })
     .select("id")
     .single();

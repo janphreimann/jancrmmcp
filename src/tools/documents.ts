@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { randomUUID } from "crypto";
-import { supabase } from "../supabase.js";
+import { supabase, agentMeta } from "../supabase.js";
 
 // ─── Folder tools ─────────────────────────────────────────────────────────────
 
@@ -25,7 +25,7 @@ export const createFolderSchema = z.object({
 export async function createFolder(args: z.infer<typeof createFolderSchema>) {
   const { data, error } = await supabase
     .from("document_folders")
-    .insert({ name: args.name, parent_folder_id: args.parent_folder_id ?? null })
+    .insert({ name: args.name, parent_folder_id: args.parent_folder_id ?? null, ...agentMeta() })
     .select("id, name, parent_folder_id")
     .single();
   if (error) throw new Error(error.message);
@@ -182,6 +182,7 @@ export async function createTextDocument(args: z.infer<typeof createTextDocument
     interaction_id: entity_type === "interaction" ? entity_id : null,
     calendar_event_id: entity_type === "calendar_event" ? entity_id : null,
     task_id: entity_type === "task" ? entity_id : null,
+    ...agentMeta(),
   };
 
   const { data, error } = await supabase.from("documents").insert(insert).select("id").single();
@@ -264,6 +265,7 @@ export async function uploadBinaryDocument(args: z.infer<typeof uploadBinaryDocu
     interaction_id: entity_type === "interaction" ? entity_id : null,
     calendar_event_id: entity_type === "calendar_event" ? entity_id : null,
     task_id: entity_type === "task" ? entity_id : null,
+    ...agentMeta(),
   };
 
   const { data, error } = await supabase.from("documents").insert(insert).select("id").single();

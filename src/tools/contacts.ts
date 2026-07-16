@@ -1,12 +1,11 @@
 import { z } from "zod";
-import { supabase, ORG_ID } from "../supabase.js";
+import { supabase, ORG_ID, agentMeta } from "../supabase.js";
 
 export const searchContactsSchema = z.object({
   query: z.string().optional().describe("Fuzzy search across first name, last name and email — tolerates typos and word-order variants (e.g. 'Schiller Benjamin' or 'Beniamin Schiler')"),
   company_id: z.string().uuid().optional().describe("Filter by company UUID"),
   tag_ids: z.array(z.string().uuid()).optional().describe("Filter by tag UUIDs"),
   source: z.string().optional().describe("Filter by source (e.g. Referral, Conference / Event)"),
-  do_not_contact: z.boolean().optional().describe("Filter by do-not-contact flag"),
   limit: z.number().int().min(1).max(100).default(25),
 });
 
@@ -37,12 +36,11 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
 
     if (args.company_id) contacts = contacts.filter((c) => c.company_id === args.company_id);
     if (args.source) contacts = contacts.filter((c) => c.source === args.source);
-    if (args.do_not_contact !== undefined) contacts = contacts.filter((c) => c.do_not_contact === args.do_not_contact);
   } else {
     let q = supabase
       .from("contacts")
       .select(
-        "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, do_not_contact, companies:company_id(id, name)"
+        "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, companies:company_id(id, name)"
       )
       .eq("organization_id", ORG_ID!)
       .is("deleted_at", null)
@@ -51,7 +49,6 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
 
     if (args.company_id) q = q.eq("company_id", args.company_id);
     if (args.source) q = q.eq("source", args.source);
-    if (args.do_not_contact !== undefined) q = q.eq("do_not_contact", args.do_not_contact);
 
     const { data, error } = await q;
     if (error) throw new Error(error.message);
@@ -103,6 +100,9 @@ export const createContactSchema = z.object({
   last_name: z.string().min(1),
   salutation: z.enum(["Mr.", "Ms.", "Dr.", "Prof.", "Prof. Dr."]).optional().nullable(),
   suffix: z.string().optional().nullable(),
+  date_of_birth: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
+  nationality: z.string().optional().nullable(),
+  preferred_language: z.enum(["German", "English", "French", "Spanish", "Italian", "Other"]).optional().nullable(),
   email_1: z.string().email().optional().nullable(),
   email_1_label: z.enum(["Work", "Personal", "Other"]).optional().nullable(),
   email_2: z.string().email().optional().nullable(),
@@ -116,18 +116,23 @@ export const createContactSchema = z.object({
   department: z.string().optional().nullable(),
   company_id: z.string().uuid().optional().nullable(),
   linkedin_url: z.string().optional().nullable(),
+  website: z.string().optional().nullable(),
+  address_street: z.string().optional().nullable(),
+  address_extra: z.string().optional().nullable(),
+  address_zip: z.string().optional().nullable(),
+  address_city: z.string().optional().nullable(),
+  address_state: z.string().optional().nullable(),
+  address_country: z.string().optional().nullable(),
   source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
-  do_not_contact: z.boolean().optional(),
-  do_not_contact_reason: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
   tag_ids: z.array(z.string().uuid()).optional(),
-  notes: z.string().optional().nullable().describe("Internal notes"),
 });
 
 export async function createContact(args: z.infer<typeof createContactSchema>) {
-  const { tag_ids, notes, ...fields } = args;
+  const { tag_ids, ...fields } = args;
   const { data, error } = await supabase
     .from("contacts")
-    .insert({ ...fields, internal_notes: notes ?? null, organization_id: ORG_ID })
+    .insert({ ...fields, organization_id: ORG_ID, ...agentMeta() })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
@@ -146,6 +151,9 @@ export const updateContactSchema = z.object({
   last_name: z.string().optional(),
   salutation: z.enum(["Mr.", "Ms.", "Dr.", "Prof.", "Prof. Dr."]).optional().nullable(),
   suffix: z.string().optional().nullable(),
+  date_of_birth: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
+  nationality: z.string().optional().nullable(),
+  preferred_language: z.enum(["German", "English", "French", "Spanish", "Italian", "Other"]).optional().nullable(),
   email_1: z.string().email().optional().nullable(),
   email_1_label: z.enum(["Work", "Personal", "Other"]).optional().nullable(),
   email_2: z.string().email().optional().nullable(),
@@ -159,10 +167,15 @@ export const updateContactSchema = z.object({
   department: z.string().optional().nullable(),
   company_id: z.string().uuid().optional().nullable(),
   linkedin_url: z.string().optional().nullable(),
+  website: z.string().optional().nullable(),
+  address_street: z.string().optional().nullable(),
+  address_extra: z.string().optional().nullable(),
+  address_zip: z.string().optional().nullable(),
+  address_city: z.string().optional().nullable(),
+  address_state: z.string().optional().nullable(),
+  address_country: z.string().optional().nullable(),
   source: z.enum(["Personal Meeting", "Referral", "Conference / Event", "Online / Social Media", "Work", "Import", "Other"]).optional().nullable(),
-  internal_notes: z.string().optional().nullable(),
-  do_not_contact: z.boolean().optional(),
-  do_not_contact_reason: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
 });
 
 export async function updateContact(args: z.infer<typeof updateContactSchema>) {

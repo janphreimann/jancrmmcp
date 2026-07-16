@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { supabase, ORG_ID } from "../supabase.js";
+import { supabase, ORG_ID, agentMeta } from "../supabase.js";
 import { STATUS_TO_DB } from "../constants.js";
 
 export const createTaskSchema = z.object({
@@ -33,6 +33,7 @@ export async function createTask(args: z.infer<typeof createTaskSchema>) {
       status: STATUS_TO_DB[status] ?? "open",
       reminder: reminder ?? null,
       organization_id: ORG_ID,
+      ...agentMeta(),
     })
     .select("id")
     .single();
