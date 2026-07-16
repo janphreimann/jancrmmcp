@@ -31,7 +31,7 @@ export async function searchDeals(args: z.infer<typeof searchDealsSchema>) {
   } else {
     let q = supabase
       .from("deals")
-      .select("id, name, stage, deal_type, priority, target_volume, currency, main_contact_id, created_at")
+      .select("id, name, stage, deal_type, target_volume, main_contact_id, created_at")
       .eq("organization_id", ORG_ID!)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
