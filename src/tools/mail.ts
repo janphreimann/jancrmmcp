@@ -34,20 +34,28 @@ export async function createEmailDraft(args: z.infer<typeof createEmailDraftSche
     accountId = data[0].id;
   }
 
-  const resp = await fetch(`${SUPABASE_URL}/functions/v1/mail-create-draft`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
-    body: JSON.stringify({
-      account_id: accountId,
-      to: args.to,
-      cc: args.cc,
-      subject: args.subject,
-      body_html: args.body_html,
-    }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  let resp: Response;
+  try {
+    resp = await fetch(`${SUPABASE_URL}/functions/v1/mail-create-draft`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({
+        account_id: accountId,
+        to: args.to,
+        cc: args.cc,
+        subject: args.subject,
+        body_html: args.body_html,
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   const rawText = await resp.text();
   let result: { appended?: boolean; folder?: string; error?: string };
