@@ -34,42 +34,56 @@ export async function createEmailDraft(args: z.infer<typeof createEmailDraftSche
     accountId = data[0].id;
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
-  let resp: Response;
-  try {
-    resp = await fetch(`${SUPABASE_URL}/functions/v1/mail-create-draft`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-      body: JSON.stringify({
-        account_id: accountId,
-        to: args.to,
-        cc: args.cc,
-        subject: args.subject,
-        body_html: args.body_html,
-      }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-
-  const rawText = await resp.text();
-  let result: { appended?: boolean; folder?: string; error?: string };
-  try {
-    result = JSON.parse(rawText);
-  } catch {
-    throw new Error(`Edge function returned non-JSON (HTTP ${resp.status}): ${rawText.slice(0, 200)}`);
-  }
-  if (!resp.ok || result.error) throw new Error(result.error ?? `Edge function HTTP ${resp.status}`);
-
-  return {
-    success: true,
-    folder: result.folder,
+  const payload = {
     account_id: accountId,
-    message: `Draft saved to "${result.folder}"`,
+    to: args.to,
+    cc: args.cc,
+    subject: args.subject,
+    body_html: args.body_html,
   };
+
+  // Retry once on 503 — platform-level gateway errors (cold-start crash, transient
+  // overload) return a fast 503 with HTML before the function code even runs.
+  // A single retry after 2 s resolves these reliably without hiding real failures.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    let resp: Response;
+    try {
+      resp = await fetch(`${SUPABASE_URL}/functions/v1/mail-create-draft`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (resp.status === 503 && attempt === 1) {
+      await new Promise((r) => setTimeout(r, 2_000));
+      continue;
+    }
+
+    const rawText = await resp.text();
+    let result: { appended?: boolean; folder?: string; error?: string };
+    try {
+      result = JSON.parse(rawText);
+    } catch {
+      throw new Error(`Edge function returned non-JSON (HTTP ${resp.status}): ${rawText.slice(0, 200)}`);
+    }
+    if (!resp.ok || result.error) throw new Error(result.error ?? `Edge function HTTP ${resp.status}`);
+
+    return {
+      success: true,
+      folder: result.folder,
+      account_id: accountId,
+      message: `Draft saved to "${result.folder}"`,
+    };
+  }
+
+  throw new Error("Edge function returned 503 on both attempts — Supabase platform may be degraded");
 }
