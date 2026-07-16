@@ -49,7 +49,13 @@ export async function createEmailDraft(args: z.infer<typeof createEmailDraftSche
     }),
   });
 
-  const result = await resp.json() as { appended?: boolean; folder?: string; error?: string };
+  const rawText = await resp.text();
+  let result: { appended?: boolean; folder?: string; error?: string };
+  try {
+    result = JSON.parse(rawText);
+  } catch {
+    throw new Error(`Edge function returned non-JSON (HTTP ${resp.status}): ${rawText.slice(0, 200)}`);
+  }
   if (!resp.ok || result.error) throw new Error(result.error ?? `Edge function HTTP ${resp.status}`);
 
   return {

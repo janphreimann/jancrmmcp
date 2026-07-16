@@ -2,7 +2,7 @@ import { z } from "zod";
 import { supabase, ORG_ID } from "../supabase.js";
 
 export const searchContactsSchema = z.object({
-  query: z.string().optional().describe("Text to search across first_name, last_name, email"),
+  query: z.string().optional().describe("Fuzzy search across first name, last name and email — tolerates typos and word-order variants (e.g. 'Schiller Benjamin' or 'Beniamin Schiler')"),
   company_id: z.string().uuid().optional().describe("Filter by company UUID"),
   tag_ids: z.array(z.string().uuid()).optional().describe("Filter by tag UUIDs"),
   source: z.string().optional().describe("Filter by source (e.g. Referral, Conference / Event)"),
@@ -11,29 +11,52 @@ export const searchContactsSchema = z.object({
 });
 
 export async function searchContacts(args: z.infer<typeof searchContactsSchema>) {
-  let q = supabase
-    .from("contacts")
-    .select(
-      "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, do_not_contact, companies:company_id(id, name)"
-    )
-    .eq("organization_id", ORG_ID!)
-    .is("deleted_at", null)
-    .order("last_name")
-    .limit(args.limit);
+  let contacts: Array<Record<string, unknown>>;
 
   if (args.query) {
-    q = q.or(
-      `first_name.ilike.%${args.query}%,last_name.ilike.%${args.query}%,email_1.ilike.%${args.query}%`
-    );
+    const { data, error } = await supabase.rpc("search_contacts_smart", {
+      p_query: args.query,
+      p_org_id: ORG_ID,
+      p_limit: args.limit,
+    });
+    if (error) throw new Error(error.message);
+
+    contacts = (data ?? []).map((c: Record<string, unknown>) => ({
+      id: c.id,
+      first_name: c.first_name,
+      last_name: c.last_name,
+      email_1: c.email_1,
+      phone_1: c.phone_1,
+      job_title: c.job_title,
+      company_id: c.company_id,
+      companies: c.company_id ? { id: c.company_id, name: c.company_name } : null,
+      source: c.source,
+      do_not_contact: c.do_not_contact,
+      match_score: c.match_score,
+    }));
+
+    if (args.company_id) contacts = contacts.filter((c) => c.company_id === args.company_id);
+    if (args.source) contacts = contacts.filter((c) => c.source === args.source);
+    if (args.do_not_contact !== undefined) contacts = contacts.filter((c) => c.do_not_contact === args.do_not_contact);
+  } else {
+    let q = supabase
+      .from("contacts")
+      .select(
+        "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, do_not_contact, companies:company_id(id, name)"
+      )
+      .eq("organization_id", ORG_ID!)
+      .is("deleted_at", null)
+      .order("last_name")
+      .limit(args.limit);
+
+    if (args.company_id) q = q.eq("company_id", args.company_id);
+    if (args.source) q = q.eq("source", args.source);
+    if (args.do_not_contact !== undefined) q = q.eq("do_not_contact", args.do_not_contact);
+
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    contacts = data ?? [];
   }
-  if (args.company_id) q = q.eq("company_id", args.company_id);
-  if (args.source) q = q.eq("source", args.source);
-  if (args.do_not_contact !== undefined) q = q.eq("do_not_contact", args.do_not_contact);
-
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
-
-  let contacts = data ?? [];
 
   if (args.tag_ids && args.tag_ids.length > 0) {
     const { data: tagLinks } = await supabase
@@ -46,7 +69,7 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
       tagCount[l.contact_id] = (tagCount[l.contact_id] || 0) + 1;
     });
     const required = args.tag_ids.length;
-    contacts = contacts.filter((c: { id: string }) => (tagCount[c.id] || 0) >= required);
+    contacts = contacts.filter((c) => (tagCount[c.id as string] || 0) >= required);
   }
 
   return contacts;

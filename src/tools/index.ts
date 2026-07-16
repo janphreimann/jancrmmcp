@@ -13,6 +13,7 @@ import {
 } from "./companies.js";
 import {
   searchDealsSchema, searchDeals,
+  getDealSchema, getDeal,
   createDealSchema, createDeal,
   updateDealSchema, updateDeal,
 } from "./deals.js";
@@ -103,6 +104,13 @@ export function registerAllTools(server: McpServer) {
     "Search deals by name, stage, deal type, or linked contact",
     searchDealsSchema.shape,
     async (args) => ok(await searchDeals(args as Parameters<typeof searchDeals>[0]))
+  );
+
+  server.tool(
+    "get_deal",
+    "Get full deal details by UUID, including linked contacts, companies and tags",
+    getDealSchema.shape,
+    async (args) => ok(await getDeal(args as Parameters<typeof getDeal>[0]))
   );
 
   server.tool(

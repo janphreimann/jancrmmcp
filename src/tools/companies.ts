@@ -2,13 +2,27 @@ import { z } from "zod";
 import { supabase, ORG_ID } from "../supabase.js";
 
 export const searchCompaniesSchema = z.object({
-  query: z.string().optional().describe("Search in company name"),
+  query: z.string().optional().describe("Fuzzy search in company name and short name — tolerates typos (e.g. 'Exalon' finds 'Exaloan')"),
   industry: z.string().optional().describe("Filter by industry (e.g. Technology, Financial Services)"),
   source: z.string().optional().describe("Filter by source (e.g. Referral, Conference / Event)"),
   limit: z.number().int().min(1).max(100).default(25),
 });
 
 export async function searchCompanies(args: z.infer<typeof searchCompaniesSchema>) {
+  if (args.query) {
+    const { data, error } = await supabase.rpc("search_companies_smart", {
+      p_query: args.query,
+      p_org_id: ORG_ID,
+      p_limit: args.limit,
+    });
+    if (error) throw new Error(error.message);
+
+    let companies: Array<Record<string, unknown>> = data ?? [];
+    if (args.industry) companies = companies.filter((c) => c.industry === args.industry);
+    if (args.source) companies = companies.filter((c) => c.source === args.source);
+    return companies;
+  }
+
   let q = supabase
     .from("companies")
     .select("id, name, industry, website, address_city, address_country, source")
@@ -17,7 +31,6 @@ export async function searchCompanies(args: z.infer<typeof searchCompaniesSchema
     .order("name")
     .limit(args.limit);
 
-  if (args.query) q = q.ilike("name", `%${args.query}%`);
   if (args.industry) q = q.eq("industry", args.industry);
   if (args.source) q = q.eq("source", args.source);
 

@@ -3,7 +3,7 @@ import { supabase, ORG_ID } from "../supabase.js";
 import { STAGE_TO_DB, STAGE_FROM_DB, DEAL_STAGES } from "../constants.js";
 
 export const searchDealsSchema = z.object({
-  query: z.string().optional().describe("Search in deal name"),
+  query: z.string().optional().describe("Fuzzy search in deal name — tolerates typos"),
   stage: z.enum(DEAL_STAGES).optional(),
   deal_type: z.string().optional(),
   contact_id: z.string().uuid().optional().describe("Filter to deals linked to this contact"),
@@ -11,27 +11,43 @@ export const searchDealsSchema = z.object({
 });
 
 export async function searchDeals(args: z.infer<typeof searchDealsSchema>) {
-  let q = supabase
-    .from("deals")
-    .select("id, name, stage, deal_type, priority, target_volume, currency, main_contact_id, created_at")
-    .eq("organization_id", ORG_ID!)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(args.limit);
+  let deals: Array<Record<string, unknown>>;
 
-  if (args.query) q = q.ilike("name", `%${args.query}%`);
-  if (args.stage) q = q.eq("stage", STAGE_TO_DB[args.stage] ?? args.stage);
-  if (args.deal_type) q = q.eq("deal_type", args.deal_type);
+  if (args.query) {
+    const { data, error } = await supabase.rpc("search_deals_smart", {
+      p_query: args.query,
+      p_org_id: ORG_ID,
+      p_limit: args.limit,
+    });
+    if (error) throw new Error(error.message);
 
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
-
-  let deals: Array<Record<string, unknown>> = (data ?? []).map(
-    (d: { stage: string; [key: string]: unknown }) => ({
+    deals = (data ?? []).map((d: { stage: string; [key: string]: unknown }) => ({
       ...d,
       stage: STAGE_FROM_DB[d.stage] ?? d.stage,
-    })
-  );
+    }));
+
+    if (args.stage) deals = deals.filter((d) => d.stage === args.stage);
+    if (args.deal_type) deals = deals.filter((d) => d.deal_type === args.deal_type);
+  } else {
+    let q = supabase
+      .from("deals")
+      .select("id, name, stage, deal_type, priority, target_volume, currency, main_contact_id, created_at")
+      .eq("organization_id", ORG_ID!)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(args.limit);
+
+    if (args.stage) q = q.eq("stage", STAGE_TO_DB[args.stage] ?? args.stage);
+    if (args.deal_type) q = q.eq("deal_type", args.deal_type);
+
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+
+    deals = (data ?? []).map((d: { stage: string; [key: string]: unknown }) => ({
+      ...d,
+      stage: STAGE_FROM_DB[d.stage] ?? d.stage,
+    }));
+  }
 
   if (args.contact_id) {
     const { data: links } = await supabase
@@ -43,6 +59,45 @@ export async function searchDeals(args: z.infer<typeof searchDealsSchema>) {
   }
 
   return deals;
+}
+
+export const getDealSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export async function getDeal(args: z.infer<typeof getDealSchema>) {
+  const { data, error } = await supabase
+    .from("deals")
+    .select("*")
+    .eq("id", args.id)
+    .eq("organization_id", ORG_ID!)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+
+  const [contactLinks, companyLinks, tagRows] = await Promise.all([
+    supabase
+      .from("deal_contacts")
+      .select("contact_id, contacts:contact_id(id, first_name, last_name, email_1)")
+      .eq("deal_id", args.id),
+    supabase
+      .from("deal_companies")
+      .select("company_id, companies:company_id(id, name)")
+      .eq("deal_id", args.id),
+    supabase
+      .from("deal_tags")
+      .select("tag_id, tags:tag_id(id, name, color)")
+      .eq("deal_id", args.id),
+  ]);
+
+  return {
+    ...data,
+    stage: STAGE_FROM_DB[data.stage] ?? data.stage,
+    contacts: (contactLinks.data ?? []).map((r: { contacts: unknown }) => r.contacts),
+    companies: (companyLinks.data ?? []).map((r: { companies: unknown }) => r.companies),
+    tags: (tagRows.data ?? []).map((r: { tags: unknown }) => r.tags),
+  };
 }
 
 export const createDealSchema = z.object({
