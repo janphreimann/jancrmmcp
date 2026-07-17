@@ -84,7 +84,17 @@ export async function createEmailDraft(args: z.infer<typeof createEmailDraftSche
     } catch {
       throw new Error(`Edge function returned non-JSON (HTTP ${resp.status}): ${rawText.slice(0, 200)}`);
     }
-    if (!resp.ok || result.error) throw new Error(result.error ?? `Edge function HTTP ${resp.status}`);
+    if (!resp.ok || result.error) {
+      const msg = result.error ?? `Edge function HTTP ${resp.status}`;
+      // Connection-level IMAP errors (provider dropped the connection) are
+      // transient — a fresh attempt a moment later typically succeeds.
+      const transient = /ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|Connection closed|IMAP timed out/i.test(msg);
+      if (transient && attempt === 1) {
+        await new Promise((r) => setTimeout(r, 2_000));
+        continue;
+      }
+      throw new Error(msg);
+    }
 
     return {
       success: true,
