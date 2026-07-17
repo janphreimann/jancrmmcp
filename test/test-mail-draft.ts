@@ -166,8 +166,14 @@ await test("appends a draft to the IMAP Drafts folder via edge function directly
   });
   const body = await resp.json() as any;
   assert(resp.status === 200, `Expected 200, got ${resp.status}. Error: ${body?.error}`);
-  assert(body.appended === true, `Expected appended=true, got ${body.appended}`);
+  // queued=true is the legitimate fallback while the provider rate-limits
+  // connections: the draft is appended by imap-sync-account within minutes.
+  assert(
+    body.appended === true || body.queued === true,
+    `Expected appended or queued, got ${JSON.stringify(body)}`
+  );
   assert(typeof body.folder === "string", `Expected folder string, got ${JSON.stringify(body.folder)}`);
+  if (body.queued) console.log("     → (provider rate-limited; draft went through the queue)");
 });
 
 console.log("\n=== 5. MCP tool: end-to-end (exact parameters from the reported 503 failure) ===");
@@ -181,10 +187,67 @@ await test("createEmailDraft — same params as the failing request (no account_
   });
 
   assert(result.success === true, `Expected success=true, got ${JSON.stringify(result)}`);
-  assert(typeof result.folder === "string" && result.folder.length > 0, `Expected folder string`);
   assert(typeof result.account_id === "string", "Expected account_id string");
-  assert(result.message.startsWith("Draft saved to"), `Unexpected message: ${result.message}`);
-  console.log(`     → Draft saved to folder: "${result.folder}"`);
+  if ((result as any).queued) {
+    assert(/queued server-side/.test(result.message), `Unexpected queued message: ${result.message}`);
+    console.log("     → (provider rate-limited; draft was queued server-side)");
+  } else {
+    assert(typeof result.folder === "string" && result.folder.length > 0, `Expected folder string`);
+    assert(result.message.startsWith("Draft saved to"), `Unexpected message: ${result.message}`);
+    console.log(`     → Draft saved to folder: "${result.folder}"`);
+  }
+});
+
+console.log("\n=== 6. Queue fallback: simulated provider block (no IMAP login used) ===");
+
+await test("simulate_transient=true queues the draft; sync appends it", async () => {
+  const { data: accounts } = await admin
+    .from("ms_email_accounts")
+    .select("id")
+    .order("is_default", { ascending: false })
+    .limit(1);
+  assert(!!accounts?.length, "No email account — covered earlier");
+
+  const resp = await fetch(`${SUPABASE_URL}/functions/v1/mail-create-draft`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${SRK}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      account_id: accounts[0].id,
+      to: ["test@example.com"],
+      subject: "Queue fallback test (integration)",
+      body_html: "Automated test draft via queue. You can delete it.",
+      simulate_transient: true,
+    }),
+  });
+  const body = await resp.json() as any;
+  assert(resp.status === 200, `Expected 200, got ${resp.status}. Error: ${body?.error}`);
+  assert(body.queued === true, `Expected queued=true, got ${JSON.stringify(body)}`);
+  assert(typeof body.message_id === "string", "Expected message_id in queued response");
+
+  // The edge function fire-and-forgets an imap-sync-account run; poll the
+  // queue row. If another sync holds the lock the append can wait for the
+  // next 5-min tick, so a still-pending row is not a failure here.
+  let status = "pending";
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setTimeout(r, 2_000));
+    const { data: row } = await admin
+      .from("email_draft_queue")
+      .select("status, last_error")
+      .eq("message_id_header", body.message_id)
+      .single();
+    status = row?.status ?? "missing";
+    if (status === "appended" || status === "failed") break;
+  }
+  assert(status !== "failed" && status !== "missing", `Queue row ended up ${status}`);
+  console.log(
+    status === "appended"
+      ? "     → queued draft was appended by imap-sync-account"
+      : "     → still pending (sync lock busy) — will be appended on the next tick"
+  );
+
+  // Tidy up processed test rows so they don't accumulate.
+  await admin.from("email_draft_queue").delete()
+    .eq("message_id_header", body.message_id).eq("status", "appended");
 });
 
 // ─── Summary ──────────────────────────────────────────────────────────────

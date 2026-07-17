@@ -78,22 +78,27 @@ export async function createEmailDraft(args: z.infer<typeof createEmailDraftSche
     }
 
     const rawText = await resp.text();
-    let result: { appended?: boolean; folder?: string; error?: string };
+    let result: { appended?: boolean; queued?: boolean; folder?: string; error?: string };
     try {
       result = JSON.parse(rawText);
     } catch {
       throw new Error(`Edge function returned non-JSON (HTTP ${resp.status}): ${rawText.slice(0, 200)}`);
     }
-    if (!resp.ok || result.error) {
-      const msg = result.error ?? `Edge function HTTP ${resp.status}`;
-      // Connection-level IMAP errors (provider dropped the connection) are
-      // transient — a fresh attempt a moment later typically succeeds.
-      const transient = /ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|Connection closed|IMAP timed out/i.test(msg);
-      if (transient && attempt === 1) {
-        await new Promise((r) => setTimeout(r, 2_000));
-        continue;
-      }
-      throw new Error(msg);
+    // No retry on IMAP-level errors here: the edge function already retries
+    // internally and falls back to a server-side draft queue. Extra retries
+    // from this side only feed the mail provider's login rate limiting.
+    if (!resp.ok || result.error) throw new Error(result.error ?? `Edge function HTTP ${resp.status}`);
+
+    if (result.queued) {
+      return {
+        success: true,
+        queued: true,
+        account_id: accountId,
+        message:
+          `Draft accepted. The mail provider is currently rate-limiting connections, so the draft ` +
+          `was queued server-side and will appear in "${result.folder}" automatically ` +
+          `(usually within seconds, at most ~5 minutes). No action needed — do not retry.`,
+      };
     }
 
     return {
