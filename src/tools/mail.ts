@@ -63,9 +63,18 @@ export async function createEmailDraft(args: z.infer<typeof createEmailDraftSche
       clearTimeout(timer);
     }
 
-    if (resp.status === 503 && attempt === 1) {
-      await new Promise((r) => setTimeout(r, 2_000));
-      continue;
+    if (resp.status === 503) {
+      if (attempt === 1) {
+        await new Promise((r) => setTimeout(r, 2_000));
+        continue;
+      }
+      // Both attempts got 503 — platform-level failure, empty body, no JSON to parse.
+      const preview = (await resp.text()).slice(0, 200).trim();
+      throw new Error(
+        preview
+          ? `Edge function returned non-JSON (HTTP 503): ${preview}`
+          : "Edge function returned 503 on both attempts — Supabase platform may be degraded"
+      );
     }
 
     const rawText = await resp.text();
