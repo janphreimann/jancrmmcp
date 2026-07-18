@@ -121,7 +121,7 @@ export function registerAllTools(server: McpServer) {
 
   server.tool(
     "update_deal",
-    "Update a deal — stage, priority, description, volumes, dates",
+    "Update a deal — stage, description, volumes, dates",
     updateDealSchema.shape,
     async (args) => ok(await updateDeal(args as Parameters<typeof updateDeal>[0]))
   );
