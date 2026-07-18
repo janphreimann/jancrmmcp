@@ -18,6 +18,7 @@ import {
   updateDealSchema, updateDeal,
 } from "./deals.js";
 import { createTaskSchema, createTask } from "./tasks.js";
+import { createCalendarEventSchema, createCalendarEvent } from "./calendar.js";
 import { createEmailDraftSchema, createEmailDraft } from "./mail.js";
 import {
   listTagsSchema, listTags,
@@ -131,6 +132,13 @@ export function registerAllTools(server: McpServer) {
     "Create a task optionally linked to a contact, company, or deal",
     createTaskSchema.shape,
     async (args) => ok(await createTask(args as Parameters<typeof createTask>[0]))
+  );
+
+  server.tool(
+    "create_calendar_event",
+    "Create a calendar event (appointment) in the user's CalDAV calendar. Use this — not create_task — when the user asks for a 'Termin' or appointment. Times must be ISO 8601 with timezone offset.",
+    createCalendarEventSchema.shape,
+    async (args) => ok(await createCalendarEvent(args as Parameters<typeof createCalendarEvent>[0]))
   );
 
   server.tool(

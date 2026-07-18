@@ -1,8 +1,31 @@
 # crm-mcp-server
 
-MCP server exposing CRM tools (contacts, companies, deals, tasks, documents,
-folders) to AI agents (Claude, claude.ai connector) backed by the same
-Supabase project as the main CRM webapp (`../Jan CRM`).
+MCP server exposing CRM tools (contacts, companies, deals, tasks, calendar
+events, documents, folders) to AI agents (Claude, claude.ai connector) backed
+by the same Supabase project as the main CRM webapp (`../Jan CRM`).
+
+Calendar events are special: they live on an external CalDAV server, and the
+`calendar_events` table is only a sync mirror. `create_calendar_event`
+(`src/tools/calendar.ts`) therefore does a CalDAV PUT first and then upserts
+the mirror row (with `agentMeta()`). Deleting only the mirror row never works
+— the next `sync-calendar` run resurrects the event — which is why the
+AgentBadge reject path for calendar events in the webapp goes through the
+`write-calendar` edge function instead of a plain DB delete.
+
+## Deployment
+
+This server and the CRM webapp (`../Jan CRM`) are two **separate Vercel
+projects**. Each has its own env vars configured in its own Vercel project
+dashboard — there is no shared config and no repo-level `vercel.json` env
+wiring for secrets.
+
+Local `.env` files are gitignored and never deployed. Editing a local `.env`
+(in either repo) has zero effect on production — changing a secret requires
+updating it directly in the corresponding Vercel project's Environment
+Variables, then triggering a fresh deploy (not a cached rebuild) for it to
+take effect. This bit us once: rotating the Supabase key locally and
+"redeploying" left the CRM webapp shipping a stale, now-dead legacy anon key
+until the Vercel-side env var was updated directly.
 
 Interactions are intentionally **not** creatable via this server — logging a
 call/meeting/email as an interaction is a user-only action in the CRM UI.
@@ -16,7 +39,7 @@ approval before it's treated as fully trusted data.
 
 This is implemented with two columns, present on every entity table
 (`contacts`, `companies`, `deals`, `tasks`, `interactions`, `documents`,
-`document_folders`):
+`document_folders`, `calendar_events`):
 
 - `created_by_agent boolean not null default false`
 - `agent_approved boolean not null default false`
