@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { randomUUID } from "crypto";
-import { supabase, agentMeta } from "../supabase.js";
+import { supabase, agentMeta, ORG_ID } from "../supabase.js";
 
 // ─── Folder tools ─────────────────────────────────────────────────────────────
 
@@ -60,6 +60,7 @@ export async function listDocuments(args: z.infer<typeof listDocumentsSchema>) {
   let q = supabase
     .from("documents")
     .select("id, file_name, file_size, description, folder_id, uploaded_at, contact_id, company_id, deal_id")
+    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .order("uploaded_at", { ascending: false })
     .limit(args.limit);
@@ -89,6 +90,7 @@ export async function getDocumentContent(args: z.infer<typeof getDocumentContent
     .from("documents")
     .select("id, file_name, file_url, file_size, description, folder_id, uploaded_at")
     .eq("id", args.id)
+    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -182,6 +184,7 @@ export async function createTextDocument(args: z.infer<typeof createTextDocument
     interaction_id: entity_type === "interaction" ? entity_id : null,
     calendar_event_id: entity_type === "calendar_event" ? entity_id : null,
     task_id: entity_type === "task" ? entity_id : null,
+    organization_id: ORG_ID,
     ...agentMeta(),
   };
 
@@ -265,6 +268,7 @@ export async function uploadBinaryDocument(args: z.infer<typeof uploadBinaryDocu
     interaction_id: entity_type === "interaction" ? entity_id : null,
     calendar_event_id: entity_type === "calendar_event" ? entity_id : null,
     task_id: entity_type === "task" ? entity_id : null,
+    organization_id: ORG_ID,
     ...agentMeta(),
   };
 
@@ -296,6 +300,7 @@ export async function updateDocumentContent(args: z.infer<typeof updateDocumentC
     .from("documents")
     .select("id, file_name, file_url")
     .eq("id", args.id)
+    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .maybeSingle();
   if (fetchErr) throw new Error(fetchErr.message);
@@ -341,7 +346,7 @@ export async function updateDocument(args: z.infer<typeof updateDocumentSchema>)
     update.task_id = entity_type === "task" ? entity_id : null;
   }
 
-  const { error } = await supabase.from("documents").update(update).eq("id", id);
+  const { error } = await supabase.from("documents").update(update).eq("id", id).eq("organization_id", ORG_ID!);
   if (error) throw new Error(error.message);
   return { id, message: "Document updated successfully" };
 }
@@ -354,7 +359,8 @@ export async function deleteDocument(args: z.infer<typeof deleteDocumentSchema>)
   const { error } = await supabase
     .from("documents")
     .update({ deleted_at: new Date().toISOString() })
-    .eq("id", args.id);
+    .eq("id", args.id)
+    .eq("organization_id", ORG_ID!);
   if (error) throw new Error(error.message);
   return { id: args.id, message: "Document deleted" };
 }
