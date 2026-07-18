@@ -58,8 +58,13 @@ const { data, error } = await supabase
 ```
 
 If the new tool targets a table that doesn't have these two columns yet, add
-them in a migration on the CRM webapp side (`../Jan CRM/supabase/migrations`)
-before wiring up the tool — do not skip the flag because a table is new.
+them to the live DB **before** wiring up the tool — do not skip the flag
+because a table is new. There is no migrations folder anymore (deleted
+2026-07-18; `../Jan CRM/supabase/schema_export.sql` is a stale snapshot from
+before the provenance columns existed): DDL goes directly through the
+Supabase dashboard SQL editor, and afterwards the generated types in
+`../Jan CRM/src/integrations/supabase/types.ts` must be updated by hand or
+regenerated.
 
 The CRM frontend renders an "Agent" badge with an Approve button
 (`src/components/shared/AgentBadge.tsx` in `../Jan CRM`) for any row where
