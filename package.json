@@ -10,7 +10,7 @@
     "test": "tsx test/test-mail-draft.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.15.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@supabase/supabase-js": "^2.105.1",
     "dotenv": "^17.4.2",
     "express": "^4.18.2",

@@ -12,6 +12,25 @@ function getSecret(): string {
   return process.env.MCP_API_KEY;
 }
 
+// The OAuth approval page is the ONLY thing between the public internet and a
+// service-role connection to the whole CRM. The PIN is therefore mandatory and
+// must be reasonably long — fail closed at startup rather than silently running
+// an open server.
+const OAUTH_PIN = process.env.OAUTH_PIN;
+if (!OAUTH_PIN || OAUTH_PIN.length < 8) {
+  throw new Error(
+    "OAUTH_PIN must be set to a strong value (min. 8 chars) — refusing to start an unprotected MCP server"
+  );
+}
+
+/** Constant-time string comparison that never throws on length mismatch. */
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
 function hmacSign(data: string): string {
   const sig = createHmac("sha256", getSecret()).update(data).digest("base64url");
   return `${Buffer.from(data).toString("base64url")}.${sig}`;
@@ -46,9 +65,17 @@ function issueAuthCode(clientId: string, codeChallenge: string, redirectUri: str
   );
 }
 
+const ACCESS_TOKEN_TTL = 3600;            // 1 hour
+const REFRESH_TOKEN_TTL = 30 * 24 * 3600; // 30 days
+
 function issueAccessToken(clientId: string): string {
-  const exp = Math.floor(Date.now() / 1000) + 365 * 24 * 3600; // 1 year
+  const exp = Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL;
   return hmacSign(JSON.stringify({ t: "token", c: clientId, exp }));
+}
+
+function issueRefreshToken(clientId: string): string {
+  const exp = Math.floor(Date.now() / 1000) + REFRESH_TOKEN_TTL;
+  return hmacSign(JSON.stringify({ t: "refresh", c: clientId, exp }));
 }
 
 // ─── Stateless client store (client info encoded into client_id) ──────────────
@@ -86,7 +113,6 @@ function authPage(opts: {
   state?: string;
   error?: string;
 }): string {
-  const needsPin = !!process.env.OAUTH_PIN;
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -121,10 +147,8 @@ function authPage(opts: {
       <input type="hidden" name="code_challenge" value="${opts.codeChallenge}">
       <input type="hidden" name="client_id" value="${encodeURIComponent(opts.clientId)}">
       <input type="hidden" name="state" value="${opts.state ?? ""}">
-      ${needsPin
-        ? `<label for="pin">PIN</label>
-           <input type="password" id="pin" name="pin" placeholder="Deine OAUTH_PIN eingeben" autocomplete="off" autofocus required>`
-        : ""}
+      <label for="pin">PIN</label>
+      <input type="password" id="pin" name="pin" placeholder="Deine OAUTH_PIN eingeben" autocomplete="off" autofocus required>
       <button type="submit">Erlauben</button>
     </form>
     <p class="note">Diese Genehmigung gilt für ein Jahr.</p>
@@ -149,7 +173,6 @@ export const oauthProvider: OAuthServerProvider = {
     const req = (res as unknown as {
       req: { method: string; body: Record<string, string>; query: Record<string, string> };
     }).req;
-    const pin = process.env.OAUTH_PIN;
 
     // state may come from params (GET flow) or from the POST body (form re-submission).
     // Always prefer params.state, fall back to what was POSTed or queried.
@@ -157,21 +180,20 @@ export const oauthProvider: OAuthServerProvider = {
       params.state ?? req.body?.state ?? req.query?.state ?? undefined;
 
     if (req.method === "POST") {
-      if (pin) {
-        const submitted = String(req.body?.pin ?? "");
-        if (submitted !== pin) {
-          res.status(200).send(
-            authPage({
-              clientName: client.client_name,
-              redirectUri: params.redirectUri,
-              codeChallenge: params.codeChallenge,
-              clientId: client.client_id,
-              state,
-              error: "Falsche PIN. Bitte erneut versuchen.",
-            })
-          );
-          return;
-        }
+      // PIN is mandatory (enforced at startup) and compared in constant time.
+      const submitted = String(req.body?.pin ?? "");
+      if (!safeEqual(submitted, OAUTH_PIN)) {
+        res.status(200).send(
+          authPage({
+            clientName: client.client_name,
+            redirectUri: params.redirectUri,
+            codeChallenge: params.codeChallenge,
+            clientId: client.client_id,
+            state,
+            error: "Falsche PIN. Bitte erneut versuchen.",
+          })
+        );
+        return;
       }
 
       const code = issueAuthCode(client.client_id, params.codeChallenge, params.redirectUri);
@@ -232,16 +254,28 @@ export const oauthProvider: OAuthServerProvider = {
     return {
       access_token: issueAccessToken(client.client_id),
       token_type: "Bearer",
-      expires_in: 365 * 24 * 3600,
+      expires_in: ACCESS_TOKEN_TTL,
+      refresh_token: issueRefreshToken(client.client_id),
     };
   },
 
-  async exchangeRefreshToken(client: OAuthClientInformationFull): Promise<OAuthTokens> {
+  async exchangeRefreshToken(
+    client: OAuthClientInformationFull,
+    refreshToken: string
+  ): Promise<OAuthTokens> {
     console.log("[oauth] exchangeRefreshToken called");
+    // Actually validate the refresh token instead of blindly minting a new one.
+    const data = hmacVerify(refreshToken);
+    if (!data) throw new Error("Invalid refresh token");
+    const parsed = JSON.parse(data) as { t: string; c: string; exp: number };
+    if (parsed.t !== "refresh") throw new Error("Invalid token type");
+    if (Math.floor(Date.now() / 1000) > parsed.exp) throw new Error("Refresh token expired");
+    if (parsed.c !== client.client_id) throw new Error("client_id mismatch");
     return {
       access_token: issueAccessToken(client.client_id),
       token_type: "Bearer",
-      expires_in: 365 * 24 * 3600,
+      expires_in: ACCESS_TOKEN_TTL,
+      refresh_token: issueRefreshToken(client.client_id), // rotate
     };
   },
 
