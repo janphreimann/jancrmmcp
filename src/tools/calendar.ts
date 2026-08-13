@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { supabase, agentMeta } from "../supabase.js";
+import { supabase, agentMeta, orgUserIds } from "../supabase.js";
 
 // Calendar events live on an external CalDAV server (GMX/iCloud/…); the
 // `calendar_events` table is only a sync mirror. Creating an event therefore
@@ -146,9 +146,13 @@ export async function createCalendarEvent(args: z.infer<typeof createCalendarEve
 
   // Resolve the target calendar from the synced events (same source the
   // webapp's calendar selector uses — there is no dedicated calendars table).
+  // Nur Kalender der eigenen Organisation: calendar_events hängt am Nutzer,
+  // nicht an der Org, und dieser Server umgeht als service_role jede RLS.
+  const userIds = await orgUserIds();
   const { data: calRows, error: calErr } = await supabase
     .from("calendar_events")
     .select("calendar_name, calendar_url, user_id")
+    .in("user_id", userIds)
     .order("calendar_name");
   if (calErr) throw new Error(calErr.message);
 
@@ -182,12 +186,20 @@ export async function createCalendarEvent(args: z.infer<typeof createCalendarEve
     );
   }
 
-  // CalDAV credentials: pick the account whose base URL owns the calendar
-  const { data: accounts, error: accErr } = await supabase
-    .from("caldav_accounts")
-    .select("user_id, url, username, password");
-  if (accErr) throw new Error(accErr.message);
-  if (!accounts?.length) throw new Error("No CalDAV account configured in the CRM.");
+  // CalDAV credentials: pick the account whose base URL owns the calendar.
+  //
+  // Passwörter liegen seit 20260729_encrypt_caldav_passwords verschlüsselt;
+  // die Klartextspalte `password` ist geleert. Gelesen wird deshalb über
+  // get_caldav_accounts (SECURITY DEFINER, service_role) — dieselbe RPC, die
+  // auch die write-calendar Edge Function benutzt. Ein direktes SELECT auf die
+  // Tabelle liefert ein leeres Passwort und scheitert bei der Authentifizierung.
+  const accounts: Array<{ user_id: string; url: string; username: string; password: string }> = [];
+  for (const uid of userIds) {
+    const { data, error } = await supabase.rpc("get_caldav_accounts", { p_user_id: uid });
+    if (error) throw new Error(error.message);
+    accounts.push(...((data ?? []) as typeof accounts));
+  }
+  if (!accounts.length) throw new Error("No CalDAV account configured in the CRM.");
 
   const account = accounts.find((a) => calendar.url.startsWith(a.url.replace(/\/$/, ""))) ?? accounts[0];
   const auth = Buffer.from(`${account.username}:${account.password}`).toString("base64");

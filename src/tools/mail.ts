@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { supabase } from "../supabase.js";
+import { supabase, orgUserIds } from "../supabase.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -13,13 +13,19 @@ export const createEmailDraftSchema = z.object({
 });
 
 export async function createEmailDraft(args: z.infer<typeof createEmailDraftSchema>) {
-  // Resolve the email account to use
+  // Nur Postfächer der eigenen Organisation: ms_email_accounts hängt am
+  // Nutzer, nicht an der Org, und dieser Server umgeht als service_role jede
+  // RLS. Ohne den Filter greift eine übergebene (oder die global erste)
+  // account_id auf ein fremdes Postfach zu.
+  const userIds = await orgUserIds();
+
   let accountId: string;
   if (args.account_id) {
     const { data, error } = await supabase
       .from("ms_email_accounts")
       .select("id")
       .eq("id", args.account_id)
+      .in("user_id", userIds)
       .maybeSingle();
     if (error || !data) throw new Error(`Email account ${args.account_id} not found.`);
     accountId = data.id;
@@ -27,6 +33,7 @@ export async function createEmailDraft(args: z.infer<typeof createEmailDraftSche
     const { data, error } = await supabase
       .from("ms_email_accounts")
       .select("id")
+      .in("user_id", userIds)
       .order("is_default", { ascending: false })
       .order("created_at", { ascending: true })
       .limit(1);

@@ -2,7 +2,7 @@
 
 MCP server exposing CRM tools (contacts, companies, deals, tasks, calendar
 events, documents, folders) to AI agents (Claude, claude.ai connector) backed
-by the same Supabase project as the main CRM webapp (`../Jan CRM`).
+by the same Supabase project as the main CRM webapp (`../janreimanncrm`).
 
 Calendar events are special: they live on an external CalDAV server, and the
 `calendar_events` table is only a sync mirror. `create_calendar_event`
@@ -14,7 +14,7 @@ AgentBadge reject path for calendar events in the webapp goes through the
 
 ## Deployment
 
-This server and the CRM webapp (`../Jan CRM`) are two **separate Vercel
+This server and the CRM webapp (`../janreimanncrm`) are two **separate Vercel
 projects**. Each has its own env vars configured in its own Vercel project
 dashboard — there is no shared config and no repo-level `vercel.json` env
 wiring for secrets.
@@ -58,16 +58,33 @@ const { data, error } = await supabase
 ```
 
 If the new tool targets a table that doesn't have these two columns yet, add
-them to the live DB **before** wiring up the tool — do not skip the flag
-because a table is new. There is no migrations folder anymore (deleted
-2026-07-18; `../Jan CRM/supabase/schema_export.sql` is a stale snapshot from
-before the provenance columns existed): DDL goes directly through the
-Supabase dashboard SQL editor, and afterwards the generated types in
-`../Jan CRM/src/integrations/supabase/types.ts` must be updated by hand or
-regenerated.
+them **before** wiring up the tool — do not skip the flag because a table is
+new. DDL läuft wieder über Migrationsdateien in
+`../janreimanncrm/supabase/migrations/`, die anschliessend über den
+Management-Query-Endpunkt eingespielt werden — nicht über den
+Dashboard-SQL-Editor, sonst fehlt die Änderung im Repo. Danach die generierten
+Typen neu erzeugen (`supabase gen types typescript --project-id <ref>`) und
+`../janreimanncrm/supabase/schema_export.sql` über
+`supabase/gen_schema_export.py` neu ziehen.
+
+## Mandantentrennung
+
+Dieser Server läuft mit `service_role` — **RLS greift hier nicht**. Die
+Trennung muss deshalb in jeder Query von Hand passieren:
+
+- Tabellen mit `organization_id` → `.eq("organization_id", ORG_ID)`.
+- Nutzergebundene Tabellen ohne diese Spalte (`calendar_events`,
+  `caldav_accounts`, `ms_email_accounts`) → `.in("user_id", await orgUserIds())`
+  (aus `src/supabase.ts`). Ohne diesen Filter greifen die Tools auf Kalender
+  und Postfächer *aller* Organisationen zu; genau das war in `calendar.ts` und
+  `mail.ts` der Fall.
+
+CalDAV-Zugangsdaten stehen verschlüsselt in der DB. Die Klartextspalte
+`caldav_accounts.password` ist leer — gelesen wird über die RPC
+`get_caldav_accounts(p_user_id)`, niemals direkt aus der Tabelle.
 
 The CRM frontend renders an "Agent" badge with an Approve button
-(`src/components/shared/AgentBadge.tsx` in `../Jan CRM`) for any row where
+(`src/components/shared/AgentBadge.tsx` in `../janreimanncrm`) for any row where
 `created_by_agent = true` and `agent_approved = false`. Once a human clicks
 Approve, `agent_approved` flips to `true` and the badge disappears
 permanently — approval is a one-way switch, there's no "unapprove".

@@ -29,3 +29,28 @@ if (!ORG_ID) {
 export function agentMeta() {
   return { created_by_agent: true, agent_approved: false };
 }
+
+/**
+ * Nutzer-IDs der konfigurierten Organisation.
+ *
+ * Dieser Server arbeitet mit service_role, RLS greift also nicht. Tabellen mit
+ * `organization_id` lassen sich direkt über ORG_ID einschränken; die rein
+ * nutzergebundenen Tabellen (calendar_events, caldav_accounts,
+ * ms_email_accounts) haben keine solche Spalte und müssen über die Nutzer der
+ * Organisation gefiltert werden. Ohne diesen Umweg greifen Kalender- und
+ * Mail-Tools auf die Postfächer aller Organisationen zu.
+ */
+let orgUserIdsCache: string[] | null = null;
+
+export async function orgUserIds(): Promise<string[]> {
+  if (orgUserIdsCache) return orgUserIdsCache;
+  const { data, error } = await supabase
+    .from("users").select("id").eq("organization_id", ORG_ID);
+  if (error) throw new Error(`Could not resolve users of organization: ${error.message}`);
+  const ids = (data ?? []).map((u) => u.id as string);
+  if (!ids.length) {
+    throw new Error(`No users found for ORGANIZATION_ID ${ORG_ID}. Check the env variable.`);
+  }
+  orgUserIdsCache = ids;
+  return ids;
+}
