@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { supabase, ORG_ID, agentMeta } from "../supabase.js";
+import { agentMeta } from "../supabase.js";
+import type { Ctx } from "../context.js";
 import { STATUS_TO_DB } from "../constants.js";
 
 export const createTaskSchema = z.object({
@@ -16,7 +17,7 @@ export const createTaskSchema = z.object({
   interaction_id: z.string().uuid().optional().nullable(),
 });
 
-export async function createTask(args: z.infer<typeof createTaskSchema>) {
+export async function createTask(ctx: Ctx, args: z.infer<typeof createTaskSchema>) {
   const { due_date, due_time, status, reminder, ...fields } = args;
 
   let dueIso: string | null = null;
@@ -25,14 +26,14 @@ export async function createTask(args: z.infer<typeof createTaskSchema>) {
     dueIso = new Date(`${due_date}T${t}:00`).toISOString();
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await ctx.db
     .from("tasks")
     .insert({
       ...fields,
       due_date: dueIso,
       status: STATUS_TO_DB[status] ?? "open",
       reminder: reminder ?? null,
-      organization_id: ORG_ID,
+      created_by: ctx.userId,
       ...agentMeta(),
     })
     .select("id")

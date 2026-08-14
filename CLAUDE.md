@@ -48,11 +48,12 @@ This is implemented with two columns, present on every entity table
 into its insert payload:**
 
 ```ts
-import { supabase, ORG_ID, agentMeta } from "../supabase.js";
+import { agentMeta } from "../supabase.js";
+import type { Ctx } from "../context.js";
 
-const { data, error } = await supabase
+const { data, error } = await ctx.db
   .from("some_table")
-  .insert({ ...fields, organization_id: ORG_ID, ...agentMeta() })
+  .insert({ ...fields, ...agentMeta() })
   .select("id")
   .single();
 ```
@@ -69,19 +70,45 @@ Typen neu erzeugen (`supabase gen types typescript --project-id <ref>`) und
 
 ## Mandantentrennung
 
-Dieser Server läuft mit `service_role` — **RLS greift hier nicht**. Die
-Trennung muss deshalb in jeder Query von Hand passieren:
+Dieser Server bedient **alle** Nutzer aus einem Deployment. Wer fragt, steht
+ausschließlich im Bearer-Token; eine `ORGANIZATION_ID` aus der Umgebung gibt es
+nicht mehr.
 
-- Tabellen mit `organization_id` → `.eq("organization_id", ORG_ID)`.
-- Nutzergebundene Tabellen ohne diese Spalte (`calendar_events`,
-  `caldav_accounts`, `ms_email_accounts`) → `.in("user_id", await orgUserIds())`
-  (aus `src/supabase.ts`). Ohne diesen Filter greifen die Tools auf Kalender
-  und Postfächer *aller* Organisationen zu; genau das war in `calendar.ts` und
-  `mail.ts` der Fall.
+Die Kette:
 
-CalDAV-Zugangsdaten stehen verschlüsselt in der DB. Die Klartextspalte
-`caldav_accounts.password` ist leer — gelesen wird über die RPC
-`get_caldav_accounts(p_user_id)`, niemals direkt aus der Tabelle.
+```
+OAuth-Login (E-Mail + CRM-Passwort, src/oauth.ts)
+  → Supabase-Sitzung, verschlüsselt im MCP-Token
+  → buildContext() (src/context.ts) → Ctx { userId, orgId, db, admin }
+  → jedes Tool bekommt ctx als erstes Argument
+```
+
+`ctx.db` trägt das Access-Token des Nutzers, **RLS greift also genau wie im
+Browser** — die Trennung liegt in der Datenbank, nicht im Tool-Code. Daraus
+folgen drei Regeln:
+
+- Kein `.eq("organization_id", …)` mehr in Queries und kein `organization_id`
+  im Insert: Spalten-Default und `BEFORE INSERT`-Trigger setzen ihn aus
+  `auth.uid()`. Ein von Hand gesetzter Wert würde die Zuordnung wieder an den
+  Aufrufer hängen.
+- Schreibende Tools prüfen `select("id")` auf ein leeres Ergebnis. Eine fremde
+  UUID trifft durch die Policy auf null Zeilen — ohne die Prüfung meldet das
+  Tool trotzdem Erfolg.
+- Nutzergebundene Tabellen (`calendar_events`, `caldav_accounts`,
+  `ms_email_accounts`) filtern zusätzlich explizit auf `ctx.userId`. Innerhalb
+  einer Organisation lässt RLS sie zwar zu, aber aus dem Postfach eines
+  Kollegen zu schreiben wäre trotzdem falsch.
+
+`ctx.admin` (service_role, umgeht RLS) hat genau **eine** berechtigte
+Verwendung: `get_caldav_accounts(p_user_id)` liefert das entschlüsselte
+CalDAV-Passwort und ist für `authenticated` gesperrt. Der Parameter ist dort
+fest `ctx.userId` und darf nie aus den Tool-Argumenten stammen. Wer `ctx.admin`
+an einer weiteren Stelle braucht, begründet das hier — sonst ist `ctx.db`
+richtig.
+
+Edge Functions ruft der Server mit `ctx.accessToken` auf, nicht mit dem
+Service-Key: `mail-create-draft` löst das Postfach dann selbst über
+`auth.uid()` auf.
 
 The CRM frontend renders an "Agent" badge with an Approve button
 (`src/components/shared/AgentBadge.tsx` in `../janreimanncrm`) for any row where

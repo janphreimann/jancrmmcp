@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { oauthProvider } from "./oauth.js";
+import { buildContext } from "./context.js";
 import { registerAllTools } from "./tools/index.js";
 
 // Issuer URL must be known at startup (not per-request) because express-rate-limit
@@ -33,11 +34,27 @@ app.all(
   "/mcp",
   requireBearerAuth({ verifier: oauthProvider }),
   async (req, res) => {
+    // Wer fragt, steht im Token — und nur daraus. Der Ctx trägt das
+    // Supabase-Access-Token des Nutzers, ab hier greift die RLS des CRM.
+    const extra = req.auth?.extra as { sub?: string; supabaseAccessToken?: string } | undefined;
+    if (!extra?.sub || !extra.supabaseAccessToken) {
+      res.status(401).json({ error: "Token carries no user identity — please reconnect" });
+      return;
+    }
+
+    let ctx;
+    try {
+      ctx = await buildContext(extra.sub, extra.supabaseAccessToken);
+    } catch (err) {
+      res.status(403).json({ error: err instanceof Error ? err.message : "Access denied" });
+      return;
+    }
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
     });
     const server = new McpServer({ name: "crm-mcp-server", version: "1.0.0" });
-    registerAllTools(server);
+    registerAllTools(server, ctx);
 
     transport.onclose = () => server.close().catch(() => {});
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { supabase, ORG_ID, agentMeta } from "../supabase.js";
+import { agentMeta } from "../supabase.js";
+import type { Ctx } from "../context.js";
 import { STAGE_TO_DB, STAGE_FROM_DB, DEAL_STAGES } from "../constants.js";
 
 export const searchDealsSchema = z.object({
@@ -10,13 +11,13 @@ export const searchDealsSchema = z.object({
   limit: z.number().int().min(1).max(100).default(25),
 });
 
-export async function searchDeals(args: z.infer<typeof searchDealsSchema>) {
+export async function searchDeals(ctx: Ctx, args: z.infer<typeof searchDealsSchema>) {
   let deals: Array<Record<string, unknown>>;
 
   if (args.query) {
-    const { data, error } = await supabase.rpc("search_deals_smart", {
+    const { data, error } = await ctx.db.rpc("search_deals_smart", {
       p_query: args.query,
-      p_org_id: ORG_ID,
+      p_org_id: ctx.orgId,
       p_limit: args.limit,
     });
     if (error) throw new Error(error.message);
@@ -29,10 +30,9 @@ export async function searchDeals(args: z.infer<typeof searchDealsSchema>) {
     if (args.stage) deals = deals.filter((d) => d.stage === args.stage);
     if (args.deal_type) deals = deals.filter((d) => d.deal_type === args.deal_type);
   } else {
-    let q = supabase
+    let q = ctx.db
       .from("deals")
       .select("id, name, stage, deal_type, target_volume, main_contact_id, created_at")
-      .eq("organization_id", ORG_ID!)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(args.limit);
@@ -50,7 +50,7 @@ export async function searchDeals(args: z.infer<typeof searchDealsSchema>) {
   }
 
   if (args.contact_id) {
-    const { data: links } = await supabase
+    const { data: links } = await ctx.db
       .from("deal_contacts")
       .select("deal_id")
       .eq("contact_id", args.contact_id);
@@ -65,27 +65,26 @@ export const getDealSchema = z.object({
   id: z.string().uuid(),
 });
 
-export async function getDeal(args: z.infer<typeof getDealSchema>) {
-  const { data, error } = await supabase
+export async function getDeal(ctx: Ctx, args: z.infer<typeof getDealSchema>) {
+  const { data, error } = await ctx.db
     .from("deals")
     .select("*")
     .eq("id", args.id)
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return null;
 
   const [contactLinks, companyLinks, tagRows] = await Promise.all([
-    supabase
+    ctx.db
       .from("deal_contacts")
       .select("contact_id, contacts:contact_id(id, first_name, last_name, email_1)")
       .eq("deal_id", args.id),
-    supabase
+    ctx.db
       .from("deal_companies")
       .select("company_id, companies:company_id(id, name)")
       .eq("deal_id", args.id),
-    supabase
+    ctx.db
       .from("deal_tags")
       .select("tag_id, tags:tag_id(id, name, color)")
       .eq("deal_id", args.id),
@@ -114,14 +113,13 @@ export const createDealSchema = z.object({
   expected_close_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
 });
 
-export async function createDeal(args: z.infer<typeof createDealSchema>) {
+export async function createDeal(ctx: Ctx, args: z.infer<typeof createDealSchema>) {
   const { contact_ids, company_ids, stage, ...fields } = args;
-  const { data, error } = await supabase
+  const { data, error } = await ctx.db
     .from("deals")
     .insert({
       ...fields,
       stage: STAGE_TO_DB[stage] ?? "identified",
-      organization_id: ORG_ID,
       ...agentMeta(),
     })
     .select("id")
@@ -132,12 +130,12 @@ export async function createDeal(args: z.infer<typeof createDealSchema>) {
     new Set([...(fields.main_contact_id ? [fields.main_contact_id] : []), ...contact_ids])
   );
   if (allContactIds.length > 0) {
-    await supabase
+    await ctx.db
       .from("deal_contacts")
       .insert(allContactIds.map((cid) => ({ deal_id: data.id, contact_id: cid })));
   }
   if (company_ids.length > 0) {
-    await supabase
+    await ctx.db
       .from("deal_companies")
       .insert(company_ids.map((cid) => ({ deal_id: data.id, company_id: cid })));
   }
@@ -157,15 +155,18 @@ export const updateDealSchema = z.object({
   deal_type: z.string().optional(),
 });
 
-export async function updateDeal(args: z.infer<typeof updateDealSchema>) {
+export async function updateDeal(ctx: Ctx, args: z.infer<typeof updateDealSchema>) {
   const { id, stage, ...rest } = args;
   const updates: Record<string, unknown> = { ...rest };
   if (stage) updates.stage = STAGE_TO_DB[stage] ?? stage;
-  const { error } = await supabase
+  const { data, error } = await ctx.db
     .from("deals")
     .update(updates)
     .eq("id", id)
-    .eq("organization_id", ORG_ID!);
+    .select("id");
   if (error) throw new Error(error.message);
+  // Eine fremde UUID trifft durch die Policy auf null Zeilen. Ohne diese
+  // Prüfung meldete das Tool trotzdem Erfolg.
+  if (!data?.length) throw new Error(`Deal ${id} not found`);
   return { id, message: "Deal updated successfully" };
 }

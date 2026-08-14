@@ -1,13 +1,15 @@
 import { z } from "zod";
-import { supabase, agentMeta, orgUserIds } from "../supabase.js";
+import { agentMeta } from "../supabase.js";
+import type { Ctx } from "../context.js";
 
 // Calendar events live on an external CalDAV server (GMX/iCloud/…); the
 // `calendar_events` table is only a sync mirror. Creating an event therefore
 // means a CalDAV PUT first, then upserting the mirror row so the event shows
 // up in the CRM immediately instead of waiting for the next sync-calendar run.
 // The iCal/CalDAV logic mirrors the webapp's write-calendar edge function
-// (../Jan CRM/supabase/functions/write-calendar), which we can't call here
-// because it derives the user from a browser JWT this server doesn't have.
+// (../janreimanncrm/supabase/functions/write-calendar). Seit der Server unter
+// dem JWT des Nutzers spricht, wäre ein Aufruf dieser Funktion möglich — die
+// Verdopplung bleibt vorerst, bis jemand sie zusammenlegt.
 
 export const createCalendarEventSchema = z.object({
   title: z.string().min(1).describe("Event title"),
@@ -119,7 +121,7 @@ async function caldavPut(url: string, auth: string, ical: string): Promise<{ sta
 
 const HAS_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/;
 
-export async function createCalendarEvent(args: z.infer<typeof createCalendarEventSchema>) {
+export async function createCalendarEvent(ctx: Ctx, args: z.infer<typeof createCalendarEventSchema>) {
   if (!args.all_day && !HAS_OFFSET.test(args.start_at)) {
     throw new Error(
       `start_at must include a timezone offset (e.g. 2026-07-20T14:00:00+02:00), got "${args.start_at}". ` +
@@ -146,20 +148,21 @@ export async function createCalendarEvent(args: z.infer<typeof createCalendarEve
 
   // Resolve the target calendar from the synced events (same source the
   // webapp's calendar selector uses — there is no dedicated calendars table).
-  // Nur Kalender der eigenen Organisation: calendar_events hängt am Nutzer,
-  // nicht an der Org, und dieser Server umgeht als service_role jede RLS.
-  const userIds = await orgUserIds();
-  const { data: calRows, error: calErr } = await supabase
+  // Nur die Kalender des Aufrufers: calendar_events hängt am Nutzer, nicht an
+  // der Organisation, und filtert per RLS auf auth.uid(). Der Filter steht
+  // trotzdem explizit da — ein Termin im Kalender eines Kollegen wäre auch
+  // innerhalb einer Organisation falsch.
+  const { data: calRows, error: calErr } = await ctx.db
     .from("calendar_events")
-    .select("calendar_name, calendar_url, user_id")
-    .in("user_id", userIds)
+    .select("calendar_name, calendar_url")
+    .eq("user_id", ctx.userId)
     .order("calendar_name");
   if (calErr) throw new Error(calErr.message);
 
-  const calendars = new Map<string, { name: string; url: string; user_id: string }>();
+  const calendars = new Map<string, { name: string; url: string }>();
   for (const r of calRows ?? []) {
     if (!calendars.has(r.calendar_name)) {
-      calendars.set(r.calendar_name, { name: r.calendar_name, url: r.calendar_url, user_id: r.user_id });
+      calendars.set(r.calendar_name, { name: r.calendar_name, url: r.calendar_url });
     }
   }
   if (calendars.size === 0) {
@@ -168,7 +171,7 @@ export async function createCalendarEvent(args: z.infer<typeof createCalendarEve
     );
   }
 
-  let calendar: { name: string; url: string; user_id: string };
+  let calendar: { name: string; url: string };
   if (args.calendar_name) {
     const wanted = args.calendar_name.trim().toLowerCase();
     const match = [...calendars.values()].find((c) => c.name.toLowerCase() === wanted);
@@ -193,12 +196,13 @@ export async function createCalendarEvent(args: z.infer<typeof createCalendarEve
   // get_caldav_accounts (SECURITY DEFINER, service_role) — dieselbe RPC, die
   // auch die write-calendar Edge Function benutzt. Ein direktes SELECT auf die
   // Tabelle liefert ein leeres Passwort und scheitert bei der Authentifizierung.
-  const accounts: Array<{ user_id: string; url: string; username: string; password: string }> = [];
-  for (const uid of userIds) {
-    const { data, error } = await supabase.rpc("get_caldav_accounts", { p_user_id: uid });
-    if (error) throw new Error(error.message);
-    accounts.push(...((data ?? []) as typeof accounts));
-  }
+  // Einzige Stelle mit service_role: die RPC ist für `authenticated` gesperrt,
+  // weil sie das entschlüsselte Passwort liefert. Der Parameter ist deshalb
+  // fest ctx.userId — nie etwas, das aus den Argumenten stammt.
+  const { data: acctData, error: acctErr } = await ctx.admin
+    .rpc("get_caldav_accounts", { p_user_id: ctx.userId });
+  if (acctErr) throw new Error(acctErr.message);
+  const accounts = (acctData ?? []) as Array<{ user_id: string; url: string; username: string; password: string }>;
   if (!accounts.length) throw new Error("No CalDAV account configured in the CRM.");
 
   const account = accounts.find((a) => calendar.url.startsWith(a.url.replace(/\/$/, ""))) ?? accounts[0];
@@ -225,11 +229,11 @@ export async function createCalendarEvent(args: z.infer<typeof createCalendarEve
   // If this fails the event still exists on the CalDAV server and the next
   // sync will pick it up — but then without the created_by_agent flag, so we
   // surface the error instead of swallowing it.
-  const { data, error } = await supabase
+  const { data, error } = await ctx.db
     .from("calendar_events")
     .upsert(
       {
-        user_id: calendar.user_id,
+        user_id: ctx.userId,
         event_uid: uid,
         calendar_url: calendar.url,
         calendar_name: calendar.name,

@@ -1,50 +1,60 @@
-import { createHmac, timingSafeEqual } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import type { Response } from "express";
 import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { anonClient } from "./supabase.js";
 
-// ─── HMAC signing (stateless tokens — no DB needed, works on Vercel) ─────────
+// ─── Token-Format ────────────────────────────────────────────────────────────
+//
+// Der Server hält keinen Zustand (Vercel, stateless) — alles, was er über eine
+// Sitzung weiß, steckt im Token selbst. Weil darin die Supabase-Sitzung des
+// Nutzers liegt (Access- und Refresh-Token), werden die Nutzlasten
+// *verschlüsselt* und nicht nur signiert: wer ein MCP-Token in die Hand
+// bekommt, soll daraus keine CRM-Sitzung herauslösen können. AES-256-GCM ist
+// zugleich authentifiziert, ersetzt die Signatur also mit.
+//
+// Die Client-Metadaten der Dynamic Client Registration sind dagegen öffentlich
+// und bleiben HMAC-signiert — sie stehen als client_id in jeder Anfrage.
 
-function getSecret(): string {
+function keyMaterial(): Buffer {
   if (!process.env.MCP_API_KEY) throw new Error("MCP_API_KEY must be set");
-  return process.env.MCP_API_KEY;
+  return createHash("sha256").update(process.env.MCP_API_KEY).digest();
 }
 
-// The OAuth approval page is the ONLY thing between the public internet and a
-// service-role connection to the whole CRM. The PIN is therefore mandatory and
-// must be reasonably long — fail closed at startup rather than silently running
-// an open server.
-const OAUTH_PIN = process.env.OAUTH_PIN;
-if (!OAUTH_PIN || OAUTH_PIN.length < 8) {
-  throw new Error(
-    "OAUTH_PIN must be set to a strong value (min. 8 chars) — refusing to start an unprotected MCP server"
-  );
+function seal(payload: unknown): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", keyMaterial(), iv);
+  const body = Buffer.concat([cipher.update(JSON.stringify(payload), "utf8"), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), body]).toString("base64url");
 }
 
-/** Constant-time string comparison that never throws on length mismatch. */
-function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
+function open<T>(token: string): T | null {
+  try {
+    const raw = Buffer.from(token, "base64url");
+    if (raw.length < 29) return null;
+    const decipher = createDecipheriv("aes-256-gcm", keyMaterial(), raw.subarray(0, 12));
+    decipher.setAuthTag(raw.subarray(12, 28));
+    const plain = Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]);
+    return JSON.parse(plain.toString("utf8")) as T;
+  } catch {
+    return null;
+  }
 }
 
 function hmacSign(data: string): string {
-  const sig = createHmac("sha256", getSecret()).update(data).digest("base64url");
+  const sig = createHmac("sha256", keyMaterial()).update(data).digest("base64url");
   return `${Buffer.from(data).toString("base64url")}.${sig}`;
 }
 
 function hmacVerify(token: string): string | null {
   const lastDot = token.lastIndexOf(".");
   if (lastDot === -1) return null;
-  const dataB64 = token.slice(0, lastDot);
-  const sigGiven = token.slice(lastDot + 1);
-  const data = Buffer.from(dataB64, "base64url").toString();
-  const sigExpected = createHmac("sha256", getSecret()).update(data).digest("base64url");
+  const data = Buffer.from(token.slice(0, lastDot), "base64url").toString();
+  const sigExpected = createHmac("sha256", keyMaterial()).update(data).digest("base64url");
   try {
-    const a = Buffer.from(sigGiven, "base64url");
+    const a = Buffer.from(token.slice(lastDot + 1), "base64url");
     const b = Buffer.from(sigExpected, "base64url");
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   } catch {
@@ -53,29 +63,53 @@ function hmacVerify(token: string): string | null {
   return data;
 }
 
-function issueAuthCode(clientId: string, codeChallenge: string, redirectUri: string): string {
-  return hmacSign(
-    JSON.stringify({
-      t: "code",
-      c: clientId,
-      ch: codeChallenge,
-      r: redirectUri,
-      exp: Date.now() + 5 * 60 * 1000,
-    })
-  );
+// ─── Nutzlasten ──────────────────────────────────────────────────────────────
+
+/** Supabase-Sitzung des angemeldeten Nutzers. */
+interface Session {
+  sub: string;   // Supabase-User-ID
+  at: string;    // Access-Token (JWT, ~1 h)
+  rt: string;    // Refresh-Token
 }
 
-const ACCESS_TOKEN_TTL = 3600;            // 1 hour
-const REFRESH_TOKEN_TTL = 30 * 24 * 3600; // 30 days
+interface CodePayload extends Session { t: "code"; c: string; ch: string; r: string; exp: number }
+interface AccessPayload extends Session { t: "token"; c: string; exp: number }
+interface RefreshPayload { t: "refresh"; c: string; sub: string; rt: string; exp: number }
 
-function issueAccessToken(clientId: string): string {
-  const exp = Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL;
-  return hmacSign(JSON.stringify({ t: "token", c: clientId, exp }));
+const REFRESH_TOKEN_TTL = 30 * 24 * 3600; // 30 Tage
+
+/**
+ * Laufzeit des Supabase-Access-Tokens aus dessen eigenem `exp` — das MCP-Token
+ * soll keine Sekunde länger gelten als die CRM-Sitzung, die darin steckt.
+ */
+function accessTokenExpiry(supabaseAccessToken: string): number {
+  try {
+    const claims = JSON.parse(
+      Buffer.from(supabaseAccessToken.split(".")[1], "base64url").toString()
+    ) as { exp?: number };
+    if (claims.exp) return claims.exp;
+  } catch { /* fällt unten auf den Standard zurück */ }
+  return Math.floor(Date.now() / 1000) + 3600;
 }
 
-function issueRefreshToken(clientId: string): string {
-  const exp = Math.floor(Date.now() / 1000) + REFRESH_TOKEN_TTL;
-  return hmacSign(JSON.stringify({ t: "refresh", c: clientId, exp }));
+function issueAuthCode(clientId: string, codeChallenge: string, redirectUri: string, s: Session): string {
+  return seal({
+    t: "code", c: clientId, ch: codeChallenge, r: redirectUri,
+    exp: Date.now() + 5 * 60 * 1000, ...s,
+  } satisfies CodePayload);
+}
+
+function issueTokens(clientId: string, s: Session): OAuthTokens {
+  const exp = accessTokenExpiry(s.at);
+  return {
+    access_token: seal({ t: "token", c: clientId, exp, ...s } satisfies AccessPayload),
+    token_type: "Bearer",
+    expires_in: Math.max(60, exp - Math.floor(Date.now() / 1000)),
+    refresh_token: seal({
+      t: "refresh", c: clientId, sub: s.sub, rt: s.rt,
+      exp: Math.floor(Date.now() / 1000) + REFRESH_TOKEN_TTL,
+    } satisfies RefreshPayload),
+  };
 }
 
 // ─── Stateless client store (client info encoded into client_id) ──────────────
@@ -103,7 +137,11 @@ const clientsStore: OAuthRegisteredClientsStore = {
   },
 };
 
-// ─── Authorization approval page ─────────────────────────────────────────────
+// ─── Anmeldeseite ────────────────────────────────────────────────────────────
+
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 function authPage(opts: {
   clientName?: string;
@@ -111,6 +149,7 @@ function authPage(opts: {
   codeChallenge: string;
   clientId: string;
   state?: string;
+  email?: string;
   error?: string;
 }): string {
   return `<!DOCTYPE html>
@@ -127,10 +166,11 @@ function authPage(opts: {
     .sub{color:#666;font-size:.875rem;margin-bottom:1.5rem;line-height:1.5}
     .client{font-weight:600;color:#111}
     label{display:block;font-size:.85rem;font-weight:500;margin-bottom:.4rem;color:#333}
-    input[type=password]{width:100%;padding:.7rem 1rem;border:1px solid #ddd;border-radius:8px;font-size:1rem;outline:none;transition:border .2s}
-    input[type=password]:focus{border-color:#2563eb}
+    input[type=email],input[type=password]{width:100%;padding:.7rem 1rem;border:1px solid #ddd;border-radius:8px;font-size:1rem;outline:none;transition:border .2s}
+    input:focus{border-color:#2563eb}
+    .field{margin-bottom:1rem}
     .error{color:#dc2626;font-size:.85rem;margin-bottom:1rem;padding:.6rem;background:#fef2f2;border-radius:6px}
-    button{width:100%;margin-top:1rem;padding:.8rem;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:500;cursor:pointer;transition:background .2s}
+    button{width:100%;margin-top:.5rem;padding:.8rem;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:500;cursor:pointer;transition:background .2s}
     button:hover{background:#1d4ed8}
     .note{margin-top:1.2rem;font-size:.78rem;color:#999;text-align:center}
   </style>
@@ -138,20 +178,26 @@ function authPage(opts: {
 <body>
   <div class="card">
     <h1>Zugriff erlauben</h1>
-    <p class="sub"><span class="client">${opts.clientName ?? "Claude"}</span> möchte auf dein CRM zugreifen und Kontakte, Deals und Aufgaben verwalten.</p>
-    ${opts.error ? `<div class="error">${opts.error}</div>` : ""}
+    <p class="sub"><span class="client">${esc(opts.clientName ?? "Claude")}</span> möchte auf dein CRM zugreifen und Kontakte, Deals und Aufgaben verwalten. Melde dich mit deinen CRM-Zugangsdaten an — der Zugriff gilt genau für deinen Account und deine Organisation.</p>
+    ${opts.error ? `<div class="error">${esc(opts.error)}</div>` : ""}
     <form method="POST">
       <input type="hidden" name="response_type" value="code">
       <input type="hidden" name="code_challenge_method" value="S256">
-      <input type="hidden" name="redirect_uri" value="${opts.redirectUri}">
-      <input type="hidden" name="code_challenge" value="${opts.codeChallenge}">
+      <input type="hidden" name="redirect_uri" value="${esc(opts.redirectUri)}">
+      <input type="hidden" name="code_challenge" value="${esc(opts.codeChallenge)}">
       <input type="hidden" name="client_id" value="${encodeURIComponent(opts.clientId)}">
-      <input type="hidden" name="state" value="${opts.state ?? ""}">
-      <label for="pin">PIN</label>
-      <input type="password" id="pin" name="pin" placeholder="Deine OAUTH_PIN eingeben" autocomplete="off" autofocus required>
-      <button type="submit">Erlauben</button>
+      <input type="hidden" name="state" value="${esc(opts.state ?? "")}">
+      <div class="field">
+        <label for="email">E-Mail</label>
+        <input type="email" id="email" name="email" value="${esc(opts.email ?? "")}" autocomplete="username" autofocus required>
+      </div>
+      <div class="field">
+        <label for="password">Passwort</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit">Anmelden und erlauben</button>
     </form>
-    <p class="note">Diese Genehmigung gilt für ein Jahr.</p>
+    <p class="note">Der Zugang endet, sobald dein CRM-Konto deaktiviert wird.</p>
   </div>
 </body>
 </html>`;
@@ -179,57 +225,65 @@ export const oauthProvider: OAuthServerProvider = {
     const state: string | undefined =
       params.state ?? req.body?.state ?? req.query?.state ?? undefined;
 
-    if (req.method === "POST") {
-      // PIN is mandatory (enforced at startup) and compared in constant time.
-      const submitted = String(req.body?.pin ?? "");
-      if (!safeEqual(submitted, OAUTH_PIN)) {
-        res.status(200).send(
-          authPage({
-            clientName: client.client_name,
-            redirectUri: params.redirectUri,
-            codeChallenge: params.codeChallenge,
-            clientId: client.client_id,
-            state,
-            error: "Falsche PIN. Bitte erneut versuchen.",
-          })
-        );
-        return;
-      }
+    const page = (error?: string, email?: string) =>
+      authPage({
+        clientName: client.client_name,
+        redirectUri: params.redirectUri,
+        codeChallenge: params.codeChallenge,
+        clientId: client.client_id,
+        state,
+        email,
+        error,
+      });
 
-      const code = issueAuthCode(client.client_id, params.codeChallenge, params.redirectUri);
-      const url = new URL(params.redirectUri);
-      url.searchParams.set("code", code);
-      // state is required by Claude.ai — always include it if present
-      if (state) url.searchParams.set("state", state);
-      console.log("[oauth] authorize: redirecting with code length:", code.length, "state:", state);
-      res.redirect(url.toString());
-    } else {
-      res.send(
-        authPage({
-          clientName: client.client_name,
-          redirectUri: params.redirectUri,
-          codeChallenge: params.codeChallenge,
-          clientId: client.client_id,
-          state,
-        })
-      );
+    if (req.method !== "POST") {
+      res.send(page());
+      return;
     }
+
+    const email = String(req.body?.email ?? "").trim();
+    const password = String(req.body?.password ?? "");
+
+    // Eine einzige Fehlermeldung für jeden Fehlschlag — sonst verrät die Seite,
+    // welche Adressen ein Konto haben (Leitplanke 7, kein Account-Enumeration).
+    const GENERIC = "E-Mail oder Passwort ist falsch.";
+
+    const { data, error } = await anonClient().auth.signInWithPassword({ email, password });
+    if (error || !data.session || !data.user) {
+      res.status(200).send(page(GENERIC, email));
+      return;
+    }
+
+    // Eine bestätigte Adresse ist Voraussetzung — dieselbe Leitplanke wie beim
+    // Gründen und Annehmen im CRM. Supabase lehnt unbestätigte Anmeldungen in
+    // der Regel schon selbst ab; die Prüfung steht hier, damit sie nicht an
+    // einer Projekteinstellung hängt.
+    if (!data.user.email_confirmed_at) {
+      res.status(200).send(page("Bitte bestätige zuerst deine E-Mail-Adresse.", email));
+      return;
+    }
+
+    const session: Session = {
+      sub: data.user.id,
+      at: data.session.access_token,
+      rt: data.session.refresh_token,
+    };
+
+    const code = issueAuthCode(client.client_id, params.codeChallenge, params.redirectUri, session);
+    const url = new URL(params.redirectUri);
+    url.searchParams.set("code", code);
+    // state is required by Claude.ai — always include it if present
+    if (state) url.searchParams.set("state", state);
+    res.redirect(url.toString());
   },
 
   async challengeForAuthorizationCode(
     _client: OAuthClientInformationFull,
     authorizationCode: string
   ): Promise<string> {
-    console.log("[oauth] challengeForAuthorizationCode called, code length:", authorizationCode.length);
-    const data = hmacVerify(authorizationCode);
-    if (!data) {
-      console.error("[oauth] challengeForAuthorizationCode: hmacVerify failed");
-      throw new Error("Invalid authorization code");
-    }
-    const parsed = JSON.parse(data) as { t: string; ch: string; exp: number };
-    if (parsed.t !== "code") throw new Error("Invalid authorization code type");
+    const parsed = open<CodePayload>(authorizationCode);
+    if (!parsed || parsed.t !== "code") throw new Error("Invalid authorization code");
     if (Date.now() > parsed.exp) throw new Error("Authorization code expired");
-    console.log("[oauth] challengeForAuthorizationCode: returning challenge");
     return parsed.ch;
   },
 
@@ -237,64 +291,49 @@ export const oauthProvider: OAuthServerProvider = {
     client: OAuthClientInformationFull,
     authorizationCode: string
   ): Promise<OAuthTokens> {
-    console.log("[oauth] exchangeAuthorizationCode called");
-    const data = hmacVerify(authorizationCode);
-    if (!data) {
-      console.error("[oauth] exchangeAuthorizationCode: hmacVerify failed");
-      throw new Error("Invalid authorization code");
-    }
-    const parsed = JSON.parse(data) as { t: string; c: string; exp: number };
-    if (parsed.t !== "code") throw new Error("Invalid authorization code type");
+    const parsed = open<CodePayload>(authorizationCode);
+    if (!parsed || parsed.t !== "code") throw new Error("Invalid authorization code");
     if (Date.now() > parsed.exp) throw new Error("Authorization code expired");
-    if (parsed.c !== client.client_id) {
-      console.error("[oauth] client_id mismatch — parsed.c length:", parsed.c.length, "client.client_id length:", client.client_id.length);
-      throw new Error("client_id mismatch");
-    }
-    console.log("[oauth] exchangeAuthorizationCode: success, issuing token");
-    return {
-      access_token: issueAccessToken(client.client_id),
-      token_type: "Bearer",
-      expires_in: ACCESS_TOKEN_TTL,
-      refresh_token: issueRefreshToken(client.client_id),
-    };
+    if (parsed.c !== client.client_id) throw new Error("client_id mismatch");
+    return issueTokens(client.client_id, { sub: parsed.sub, at: parsed.at, rt: parsed.rt });
   },
 
   async exchangeRefreshToken(
     client: OAuthClientInformationFull,
     refreshToken: string
   ): Promise<OAuthTokens> {
-    console.log("[oauth] exchangeRefreshToken called");
-    // Actually validate the refresh token instead of blindly minting a new one.
-    const data = hmacVerify(refreshToken);
-    if (!data) throw new Error("Invalid refresh token");
-    const parsed = JSON.parse(data) as { t: string; c: string; exp: number };
-    if (parsed.t !== "refresh") throw new Error("Invalid token type");
+    const parsed = open<RefreshPayload>(refreshToken);
+    if (!parsed || parsed.t !== "refresh") throw new Error("Invalid refresh token");
     if (Math.floor(Date.now() / 1000) > parsed.exp) throw new Error("Refresh token expired");
     if (parsed.c !== client.client_id) throw new Error("client_id mismatch");
-    return {
-      access_token: issueAccessToken(client.client_id),
-      token_type: "Bearer",
-      expires_in: ACCESS_TOKEN_TTL,
-      refresh_token: issueRefreshToken(client.client_id), // rotate
-    };
+
+    // Die eigentliche Prüfung macht Supabase: ist das Konto deaktiviert oder
+    // die Sitzung abgemeldet, scheitert der Tausch — und damit endet auch der
+    // MCP-Zugang, ohne dass wir hier eine Sperrliste führen müssten.
+    const { data, error } = await anonClient().auth.refreshSession({ refresh_token: parsed.rt });
+    if (error || !data.session || !data.user) {
+      throw new Error("Session is no longer valid — please reconnect");
+    }
+
+    return issueTokens(client.client_id, {
+      sub: data.user.id,
+      at: data.session.access_token,
+      rt: data.session.refresh_token,
+    });
   },
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    console.log("[oauth] verifyAccessToken called, token length:", token.length);
-    const data = hmacVerify(token);
-    if (!data) {
-      console.error("[oauth] verifyAccessToken: hmacVerify failed");
-      throw new Error("Invalid access token");
-    }
-    const parsed = JSON.parse(data) as { t: string; c: string; exp: number };
-    if (parsed.t !== "token") throw new Error("Invalid token type");
+    const parsed = open<AccessPayload>(token);
+    if (!parsed || parsed.t !== "token") throw new Error("Invalid access token");
     if (Math.floor(Date.now() / 1000) > parsed.exp) throw new Error("Access token expired");
-    console.log("[oauth] verifyAccessToken: success");
     return {
       token,
       clientId: parsed.c,
       scopes: [],
       expiresAt: parsed.exp,
+      // Hieraus baut index.ts den Ctx — ab hier spricht jede Abfrage als dieser
+      // Nutzer, und die RLS des CRM erledigt die Mandantentrennung.
+      extra: { sub: parsed.sub, supabaseAccessToken: parsed.at },
     };
   },
 };

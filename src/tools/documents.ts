@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { randomUUID } from "crypto";
-import { supabase, agentMeta, ORG_ID } from "../supabase.js";
+import { agentMeta } from "../supabase.js";
+import type { Ctx } from "../context.js";
 
 // ─── Folder tools ─────────────────────────────────────────────────────────────
 
 export const listFoldersSchema = z.object({});
 
-export async function listFolders() {
-  const { data, error } = await supabase
+export async function listFolders(ctx: Ctx) {
+  const { data, error } = await ctx.db
     .from("document_folders")
     .select("id, name, parent_folder_id, created_at")
     .order("name");
@@ -22,8 +23,8 @@ export const createFolderSchema = z.object({
   ),
 });
 
-export async function createFolder(args: z.infer<typeof createFolderSchema>) {
-  const { data, error } = await supabase
+export async function createFolder(ctx: Ctx, args: z.infer<typeof createFolderSchema>) {
+  const { data, error } = await ctx.db
     .from("document_folders")
     .insert({ name: args.name, parent_folder_id: args.parent_folder_id ?? null, ...agentMeta() })
     .select("id, name, parent_folder_id")
@@ -37,12 +38,14 @@ export const renameFolderSchema = z.object({
   name: z.string().min(1).describe("New folder name"),
 });
 
-export async function renameFolder(args: z.infer<typeof renameFolderSchema>) {
-  const { error } = await supabase
+export async function renameFolder(ctx: Ctx, args: z.infer<typeof renameFolderSchema>) {
+  const { data, error } = await ctx.db
     .from("document_folders")
     .update({ name: args.name, updated_at: new Date().toISOString() })
-    .eq("id", args.id);
+    .eq("id", args.id)
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error(`Folder ${args.id} not found`);
   return { id: args.id, message: `Folder renamed to "${args.name}"` };
 }
 
@@ -56,11 +59,10 @@ export const listDocumentsSchema = z.object({
   limit: z.number().int().min(1).max(100).default(50),
 });
 
-export async function listDocuments(args: z.infer<typeof listDocumentsSchema>) {
-  let q = supabase
+export async function listDocuments(ctx: Ctx, args: z.infer<typeof listDocumentsSchema>) {
+  let q = ctx.db
     .from("documents")
     .select("id, file_name, file_size, description, folder_id, uploaded_at, contact_id, company_id, deal_id")
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .order("uploaded_at", { ascending: false })
     .limit(args.limit);
@@ -85,18 +87,17 @@ export const getDocumentContentSchema = z.object({
   id: z.string().uuid().describe("Document UUID"),
 });
 
-export async function getDocumentContent(args: z.infer<typeof getDocumentContentSchema>) {
-  const { data: doc, error } = await supabase
+export async function getDocumentContent(ctx: Ctx, args: z.infer<typeof getDocumentContentSchema>) {
+  const { data: doc, error } = await ctx.db
     .from("documents")
     .select("id, file_name, file_url, file_size, description, folder_id, uploaded_at")
     .eq("id", args.id)
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!doc) return null;
 
-  const { data: urlData, error: urlErr } = await supabase.storage
+  const { data: urlData, error: urlErr } = await ctx.db.storage
     .from("documents")
     .createSignedUrl(doc.file_url, 3600);
   if (urlErr) throw new Error(urlErr.message);
@@ -135,6 +136,19 @@ export async function getDocumentContent(args: z.infer<typeof getDocumentContent
 
 const entityTypeEnum = z.enum(["contact", "company", "deal", "interaction", "calendar_event", "task", "none"]);
 
+/**
+ * Der Upload läuft vor dem documents-Insert, die Storage-Policy kann sich zu
+ * diesem Zeitpunkt also noch nicht auf eine DB-Zeile stützen. Deshalb trägt der
+ * Pfad die Organisation im ersten Segment — daran hängt die INSERT-Policy.
+ * Byte-gleich zu uploadDocument() der Web-App (src/modules/documents/api.ts).
+ */
+function storagePathFor(ctx: Ctx, fileName: string, entityType: string, entityId?: string | null): string {
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const folder = entityType === "none" ? "general" : entityType;
+  const idPart = entityId || "_none_";
+  return `${ctx.orgId}/${folder}/${idPart}/${randomUUID()}_${safeName}`;
+}
+
 export const createTextDocumentSchema = z.object({
   file_name: z.string().min(1).describe(
     "File name including extension, e.g. 'research-notes.md' or 'report.txt'"
@@ -148,13 +162,10 @@ export const createTextDocumentSchema = z.object({
   entity_id: z.string().uuid().optional().nullable().describe("UUID of the linked entity"),
 });
 
-export async function createTextDocument(args: z.infer<typeof createTextDocumentSchema>) {
+export async function createTextDocument(ctx: Ctx, args: z.infer<typeof createTextDocumentSchema>) {
   const { file_name, content, description, folder_id, entity_type, entity_id } = args;
 
-  const safeName = file_name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const folderPath = entity_type === "none" ? "general" : entity_type;
-  const idPart = entity_id || "_none_";
-  const storagePath = `${folderPath}/${idPart}/${randomUUID()}_${safeName}`;
+  const storagePath = storagePathFor(ctx, file_name, entity_type, entity_id);
 
   const buffer = Buffer.from(content, "utf-8");
 
@@ -167,7 +178,7 @@ export async function createTextDocument(args: z.infer<typeof createTextDocument
   };
   const contentType = contentTypeMap[ext] ?? "text/plain";
 
-  const { error: upErr } = await supabase.storage
+  const { error: upErr } = await ctx.db.storage
     .from("documents")
     .upload(storagePath, buffer, { contentType, upsert: false });
   if (upErr) throw new Error(upErr.message);
@@ -184,11 +195,11 @@ export async function createTextDocument(args: z.infer<typeof createTextDocument
     interaction_id: entity_type === "interaction" ? entity_id : null,
     calendar_event_id: entity_type === "calendar_event" ? entity_id : null,
     task_id: entity_type === "task" ? entity_id : null,
-    organization_id: ORG_ID,
+    uploaded_by: ctx.userId,
     ...agentMeta(),
   };
 
-  const { data, error } = await supabase.from("documents").insert(insert).select("id").single();
+  const { data, error } = await ctx.db.from("documents").insert(insert).select("id").single();
   if (error) throw new Error(error.message);
   return { id: data.id, message: `Document "${file_name}" created successfully` };
 }
@@ -238,20 +249,17 @@ export const uploadBinaryDocumentSchema = z.object({
   entity_id: z.string().uuid().optional().nullable().describe("UUID of the linked entity"),
 });
 
-export async function uploadBinaryDocument(args: z.infer<typeof uploadBinaryDocumentSchema>) {
+export async function uploadBinaryDocument(ctx: Ctx, args: z.infer<typeof uploadBinaryDocumentSchema>) {
   const { file_name, file_data, mime_type, description, folder_id, entity_type, entity_id } = args;
 
   const buffer = Buffer.from(file_data, "base64");
 
-  const safeName = file_name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const folderPath = entity_type === "none" ? "general" : entity_type;
-  const idPart = entity_id || "_none_";
-  const storagePath = `${folderPath}/${idPart}/${randomUUID()}_${safeName}`;
+  const storagePath = storagePathFor(ctx, file_name, entity_type, entity_id);
 
   const ext = (file_name.split(".").pop() || "").toLowerCase();
   const contentType = mime_type || binaryContentTypeMap[ext] || "application/octet-stream";
 
-  const { error: upErr } = await supabase.storage
+  const { error: upErr } = await ctx.db.storage
     .from("documents")
     .upload(storagePath, buffer, { contentType, upsert: false });
   if (upErr) throw new Error(upErr.message);
@@ -268,14 +276,14 @@ export async function uploadBinaryDocument(args: z.infer<typeof uploadBinaryDocu
     interaction_id: entity_type === "interaction" ? entity_id : null,
     calendar_event_id: entity_type === "calendar_event" ? entity_id : null,
     task_id: entity_type === "task" ? entity_id : null,
-    organization_id: ORG_ID,
+    uploaded_by: ctx.userId,
     ...agentMeta(),
   };
 
-  const { data, error } = await supabase.from("documents").insert(insert).select("id").single();
+  const { data, error } = await ctx.db.from("documents").insert(insert).select("id").single();
   if (error) throw new Error(error.message);
 
-  const { data: urlData, error: urlErr } = await supabase.storage
+  const { data: urlData, error: urlErr } = await ctx.db.storage
     .from("documents")
     .createSignedUrl(storagePath, 3600);
   if (urlErr) throw new Error(urlErr.message);
@@ -294,13 +302,12 @@ export const updateDocumentContentSchema = z.object({
   content: z.string().describe("New text content"),
 });
 
-export async function updateDocumentContent(args: z.infer<typeof updateDocumentContentSchema>) {
+export async function updateDocumentContent(ctx: Ctx, args: z.infer<typeof updateDocumentContentSchema>) {
   // Fetch existing record to get storage path
-  const { data: doc, error: fetchErr } = await supabase
+  const { data: doc, error: fetchErr } = await ctx.db
     .from("documents")
     .select("id, file_name, file_url")
     .eq("id", args.id)
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .maybeSingle();
   if (fetchErr) throw new Error(fetchErr.message);
@@ -309,13 +316,13 @@ export async function updateDocumentContent(args: z.infer<typeof updateDocumentC
   const buffer = Buffer.from(args.content, "utf-8");
 
   // Overwrite the file in storage
-  const { error: upErr } = await supabase.storage
+  const { error: upErr } = await ctx.db.storage
     .from("documents")
     .update(doc.file_url, buffer, { upsert: true });
   if (upErr) throw new Error(upErr.message);
 
   // Update file_size in db
-  const { error: dbErr } = await supabase
+  const { error: dbErr } = await ctx.db
     .from("documents")
     .update({ file_size: buffer.byteLength })
     .eq("id", args.id);
@@ -333,7 +340,7 @@ export const updateDocumentSchema = z.object({
   entity_id: z.string().uuid().optional().nullable().describe("UUID of the new linked entity"),
 });
 
-export async function updateDocument(args: z.infer<typeof updateDocumentSchema>) {
+export async function updateDocument(ctx: Ctx, args: z.infer<typeof updateDocumentSchema>) {
   const { id, entity_type, entity_id, ...rest } = args;
   const update: Record<string, unknown> = { ...rest };
 
@@ -346,8 +353,9 @@ export async function updateDocument(args: z.infer<typeof updateDocumentSchema>)
     update.task_id = entity_type === "task" ? entity_id : null;
   }
 
-  const { error } = await supabase.from("documents").update(update).eq("id", id).eq("organization_id", ORG_ID!);
+  const { data, error } = await ctx.db.from("documents").update(update).eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error(`Document ${id} not found`);
   return { id, message: "Document updated successfully" };
 }
 
@@ -355,12 +363,13 @@ export const deleteDocumentSchema = z.object({
   id: z.string().uuid().describe("Document UUID to delete"),
 });
 
-export async function deleteDocument(args: z.infer<typeof deleteDocumentSchema>) {
-  const { error } = await supabase
+export async function deleteDocument(ctx: Ctx, args: z.infer<typeof deleteDocumentSchema>) {
+  const { data, error } = await ctx.db
     .from("documents")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", args.id)
-    .eq("organization_id", ORG_ID!);
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error(`Document ${args.id} not found`);
   return { id: args.id, message: "Document deleted" };
 }

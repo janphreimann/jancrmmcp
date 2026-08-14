@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { supabase, ORG_ID, agentMeta } from "../supabase.js";
+import { agentMeta } from "../supabase.js";
+import type { Ctx } from "../context.js";
 
 export const searchCompaniesSchema = z.object({
   query: z.string().optional().describe("Fuzzy search in company name — tolerates typos (e.g. 'Exalon' finds 'Exaloan')"),
@@ -7,11 +8,11 @@ export const searchCompaniesSchema = z.object({
   limit: z.number().int().min(1).max(100).default(25),
 });
 
-export async function searchCompanies(args: z.infer<typeof searchCompaniesSchema>) {
+export async function searchCompanies(ctx: Ctx, args: z.infer<typeof searchCompaniesSchema>) {
   if (args.query) {
-    const { data, error } = await supabase.rpc("search_companies_smart", {
+    const { data, error } = await ctx.db.rpc("search_companies_smart", {
       p_query: args.query,
-      p_org_id: ORG_ID,
+      p_org_id: ctx.orgId,
       p_limit: args.limit,
     });
     if (error) throw new Error(error.message);
@@ -21,10 +22,9 @@ export async function searchCompanies(args: z.infer<typeof searchCompaniesSchema
     return companies;
   }
 
-  let q = supabase
+  let q = ctx.db
     .from("companies")
     .select("id, name, industry, website, address_city, address_country")
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .order("name")
     .limit(args.limit);
@@ -40,27 +40,25 @@ export const getCompanySchema = z.object({
   id: z.string().uuid(),
 });
 
-export async function getCompany(args: z.infer<typeof getCompanySchema>) {
-  const { data, error } = await supabase
+export async function getCompany(ctx: Ctx, args: z.infer<typeof getCompanySchema>) {
+  const { data, error } = await ctx.db
     .from("companies")
     .select("*")
     .eq("id", args.id)
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return null;
 
-  const { data: tagRows } = await supabase
+  const { data: tagRows } = await ctx.db
     .from("company_tags")
     .select("tag_id, tags:tag_id(id, name, color)")
     .eq("company_id", args.id);
 
-  const { data: contacts } = await supabase
+  const { data: contacts } = await ctx.db
     .from("contacts")
     .select("id, first_name, last_name, job_title")
     .eq("company_id", args.id)
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null);
 
   return {
@@ -89,17 +87,17 @@ export const createCompanySchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
-export async function createCompany(args: z.infer<typeof createCompanySchema>) {
+export async function createCompany(ctx: Ctx, args: z.infer<typeof createCompanySchema>) {
   const { tag_ids, ...fields } = args;
-  const { data, error } = await supabase
+  const { data, error } = await ctx.db
     .from("companies")
-    .insert({ ...fields, organization_id: ORG_ID, ...agentMeta() })
+    .insert({ ...fields, ...agentMeta() })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
 
   if (tag_ids && tag_ids.length > 0) {
-    await supabase
+    await ctx.db
       .from("company_tags")
       .insert(tag_ids.map((tid) => ({ company_id: data.id, tag_id: tid })));
   }
@@ -125,13 +123,16 @@ export const updateCompanySchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
-export async function updateCompany(args: z.infer<typeof updateCompanySchema>) {
+export async function updateCompany(ctx: Ctx, args: z.infer<typeof updateCompanySchema>) {
   const { id, ...updates } = args;
-  const { error } = await supabase
+  const { data, error } = await ctx.db
     .from("companies")
     .update(updates)
     .eq("id", id)
-    .eq("organization_id", ORG_ID!);
+    .select("id");
   if (error) throw new Error(error.message);
+  // Eine fremde UUID trifft durch die Policy auf null Zeilen. Ohne diese
+  // Prüfung meldete das Tool trotzdem Erfolg.
+  if (!data?.length) throw new Error(`Company ${id} not found`);
   return { id, message: "Company updated successfully" };
 }

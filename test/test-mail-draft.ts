@@ -3,6 +3,17 @@
  *
  * Run with: npm test
  * Requires: .env file with SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
+ *
+ * ⚠️ VERALTET seit der Mandantentrennung (siehe CLAUDE.md, "Mandantentrennung").
+ * Zwei Annahmen dieser Datei gelten nicht mehr:
+ *   1. `createEmailDraft` nimmt jetzt einen `Ctx` als erstes Argument — die
+ *      Aufrufe unten kompilieren nicht mehr.
+ *   2. Die Aufrufe von `mail-create-draft` mit dem Service-Key laufen ins Leere:
+ *      die Edge Function löst das Postfach ausschließlich über `auth.uid()` auf,
+ *      der service_role-Zweig ist entfernt.
+ * Wer sie wiederbeleben will, braucht eine echte Nutzersitzung
+ * (`signInWithPassword`) und baut daraus einen Ctx. Bis dahin ist das hier eine
+ * Diagnose-Datei aus einem 503-Vorfall, kein laufender Test.
  */
 
 // Must be the first import — loads .env before supabase.ts reads process.env

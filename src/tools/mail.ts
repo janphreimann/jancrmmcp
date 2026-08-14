@@ -1,8 +1,6 @@
 import { z } from "zod";
-import { supabase, orgUserIds } from "../supabase.js";
-
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+import { supabaseUrl } from "../supabase.js";
+import type { Ctx } from "../context.js";
 
 export const createEmailDraftSchema = z.object({
   to: z.array(z.string()).optional().default([]).describe("Recipient email addresses"),
@@ -12,28 +10,26 @@ export const createEmailDraftSchema = z.object({
   account_id: z.string().uuid().optional().describe("Email account UUID — omit to use the default account"),
 });
 
-export async function createEmailDraft(args: z.infer<typeof createEmailDraftSchema>) {
-  // Nur Postfächer der eigenen Organisation: ms_email_accounts hängt am
-  // Nutzer, nicht an der Org, und dieser Server umgeht als service_role jede
-  // RLS. Ohne den Filter greift eine übergebene (oder die global erste)
-  // account_id auf ein fremdes Postfach zu.
-  const userIds = await orgUserIds();
-
+export async function createEmailDraft(ctx: Ctx, args: z.infer<typeof createEmailDraftSchema>) {
+  // Nur das eigene Postfach: ms_email_accounts hängt am Nutzer, nicht an der
+  // Organisation, und filtert per RLS auf auth.uid(). Der Filter steht
+  // trotzdem explizit da — auch innerhalb einer Organisation soll niemand aus
+  // dem Postfach eines Kollegen schreiben.
   let accountId: string;
   if (args.account_id) {
-    const { data, error } = await supabase
+    const { data, error } = await ctx.db
       .from("ms_email_accounts")
       .select("id")
       .eq("id", args.account_id)
-      .in("user_id", userIds)
+      .eq("user_id", ctx.userId)
       .maybeSingle();
     if (error || !data) throw new Error(`Email account ${args.account_id} not found.`);
     accountId = data.id;
   } else {
-    const { data, error } = await supabase
+    const { data, error } = await ctx.db
       .from("ms_email_accounts")
       .select("id")
-      .in("user_id", userIds)
+      .eq("user_id", ctx.userId)
       .order("is_default", { ascending: false })
       .order("created_at", { ascending: true })
       .limit(1);
@@ -57,11 +53,14 @@ export async function createEmailDraft(args: z.infer<typeof createEmailDraftSche
     const timer = setTimeout(() => controller.abort(), 30_000);
     let resp: Response;
     try {
-      resp = await fetch(`${SUPABASE_URL}/functions/v1/mail-create-draft`, {
+      // Mit dem JWT des Nutzers, nicht mit dem Service-Key: die Edge Function
+      // löst das Konto dann selbst über auth.uid() auf und akzeptiert keine
+      // fremde account_id mehr.
+      resp = await fetch(`${supabaseUrl}/functions/v1/mail-create-draft`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          "Authorization": `Bearer ${ctx.accessToken}`,
         },
         body: JSON.stringify(payload),
         signal: controller.signal,

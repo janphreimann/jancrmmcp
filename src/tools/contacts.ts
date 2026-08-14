@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { supabase, ORG_ID, agentMeta } from "../supabase.js";
+import { agentMeta } from "../supabase.js";
+import type { Ctx } from "../context.js";
 
 export const searchContactsSchema = z.object({
   query: z.string().optional().describe("Fuzzy search across first name, last name and email — tolerates typos and word-order variants (e.g. 'Schiller Benjamin' or 'Beniamin Schiler')"),
@@ -9,13 +10,13 @@ export const searchContactsSchema = z.object({
   limit: z.number().int().min(1).max(100).default(25),
 });
 
-export async function searchContacts(args: z.infer<typeof searchContactsSchema>) {
+export async function searchContacts(ctx: Ctx, args: z.infer<typeof searchContactsSchema>) {
   let contacts: Array<Record<string, unknown>>;
 
   if (args.query) {
-    const { data, error } = await supabase.rpc("search_contacts_smart", {
+    const { data, error } = await ctx.db.rpc("search_contacts_smart", {
       p_query: args.query,
-      p_org_id: ORG_ID,
+      p_org_id: ctx.orgId,
       p_limit: args.limit,
     });
     if (error) throw new Error(error.message);
@@ -36,12 +37,11 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
     if (args.company_id) contacts = contacts.filter((c) => c.company_id === args.company_id);
     if (args.source) contacts = contacts.filter((c) => c.source === args.source);
   } else {
-    let q = supabase
+    let q = ctx.db
       .from("contacts")
       .select(
         "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, companies:company_id(id, name)"
       )
-      .eq("organization_id", ORG_ID!)
       .is("deleted_at", null)
       .order("last_name")
       .limit(args.limit);
@@ -55,7 +55,7 @@ export async function searchContacts(args: z.infer<typeof searchContactsSchema>)
   }
 
   if (args.tag_ids && args.tag_ids.length > 0) {
-    const { data: tagLinks } = await supabase
+    const { data: tagLinks } = await ctx.db
       .from("contact_tags")
       .select("contact_id, tag_id")
       .in("tag_id", args.tag_ids);
@@ -75,18 +75,17 @@ export const getContactSchema = z.object({
   id: z.string().uuid(),
 });
 
-export async function getContact(args: z.infer<typeof getContactSchema>) {
-  const { data, error } = await supabase
+export async function getContact(ctx: Ctx, args: z.infer<typeof getContactSchema>) {
+  const { data, error } = await ctx.db
     .from("contacts")
     .select("*")
     .eq("id", args.id)
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return null;
 
-  const { data: tagRows } = await supabase
+  const { data: tagRows } = await ctx.db
     .from("contact_tags")
     .select("tag_id, tags:tag_id(id, name, color)")
     .eq("contact_id", args.id);
@@ -127,17 +126,19 @@ export const createContactSchema = z.object({
   tag_ids: z.array(z.string().uuid()).optional(),
 });
 
-export async function createContact(args: z.infer<typeof createContactSchema>) {
+export async function createContact(ctx: Ctx, args: z.infer<typeof createContactSchema>) {
   const { tag_ids, ...fields } = args;
-  const { data, error } = await supabase
+  // organization_id setzt der BEFORE-INSERT-Trigger aus auth.uid() — nie von
+  // hier aus, sonst hinge die Zuordnung wieder am Client.
+  const { data, error } = await ctx.db
     .from("contacts")
-    .insert({ ...fields, organization_id: ORG_ID, ...agentMeta() })
+    .insert({ ...fields, ...agentMeta() })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
 
   if (tag_ids && tag_ids.length > 0) {
-    await supabase
+    await ctx.db
       .from("contact_tags")
       .insert(tag_ids.map((tid) => ({ contact_id: data.id, tag_id: tid })));
   }
@@ -177,13 +178,16 @@ export const updateContactSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
-export async function updateContact(args: z.infer<typeof updateContactSchema>) {
+export async function updateContact(ctx: Ctx, args: z.infer<typeof updateContactSchema>) {
   const { id, ...updates } = args;
-  const { error } = await supabase
+  const { data, error } = await ctx.db
     .from("contacts")
     .update(updates)
     .eq("id", id)
-    .eq("organization_id", ORG_ID!);
+    .select("id");
   if (error) throw new Error(error.message);
+  // Eine fremde UUID trifft durch die Policy auf null Zeilen. Ohne diese
+  // Prüfung meldete das Tool trotzdem Erfolg.
+  if (!data?.length) throw new Error(`Contact ${id} not found`);
   return { id, message: "Contact updated successfully" };
 }

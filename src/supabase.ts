@@ -1,20 +1,45 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set");
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error("SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY must be set");
 }
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+export const supabaseUrl = SUPABASE_URL;
+export const supabaseAnonKey = SUPABASE_ANON_KEY;
+
+/**
+ * service_role — RLS greift hier *nicht*.
+ *
+ * Nur für die eine Stelle, an der ein Nutzer-JWT nicht reicht: die
+ * entschlüsselten CalDAV-Zugangsdaten aus dem Vault (`get_caldav_accounts`).
+ * Jede Abfrage darüber muss selbst auf `ctx.userId` filtern — sonst greift sie
+ * auf die Postfächer und Kalender *aller* Organisationen zu.
+ */
+export const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-export const ORG_ID = process.env.ORGANIZATION_ID;
+/**
+ * Anonymer Client für den Login auf der OAuth-Seite. Bewusst eine Fabrik und
+ * kein Singleton: `signInWithPassword` und `refreshSession` legen die Sitzung
+ * im Client ab, ein geteilter Client würde parallele Anmeldungen vermischen.
+ */
+export function anonClient(): SupabaseClient {
+  return createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
 
-if (!ORG_ID) {
-  throw new Error("ORGANIZATION_ID env variable must be set");
+/** Supabase-Client, der als der Nutzer des übergebenen Access-Tokens spricht. */
+export function userClient(accessToken: string): SupabaseClient {
+  return createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  });
 }
 
 /**
@@ -28,29 +53,4 @@ if (!ORG_ID) {
  */
 export function agentMeta() {
   return { created_by_agent: true, agent_approved: false };
-}
-
-/**
- * Nutzer-IDs der konfigurierten Organisation.
- *
- * Dieser Server arbeitet mit service_role, RLS greift also nicht. Tabellen mit
- * `organization_id` lassen sich direkt über ORG_ID einschränken; die rein
- * nutzergebundenen Tabellen (calendar_events, caldav_accounts,
- * ms_email_accounts) haben keine solche Spalte und müssen über die Nutzer der
- * Organisation gefiltert werden. Ohne diesen Umweg greifen Kalender- und
- * Mail-Tools auf die Postfächer aller Organisationen zu.
- */
-let orgUserIdsCache: string[] | null = null;
-
-export async function orgUserIds(): Promise<string[]> {
-  if (orgUserIdsCache) return orgUserIdsCache;
-  const { data, error } = await supabase
-    .from("users").select("id").eq("organization_id", ORG_ID);
-  if (error) throw new Error(`Could not resolve users of organization: ${error.message}`);
-  const ids = (data ?? []).map((u) => u.id as string);
-  if (!ids.length) {
-    throw new Error(`No users found for ORGANIZATION_ID ${ORG_ID}. Check the env variable.`);
-  }
-  orgUserIdsCache = ids;
-  return ids;
 }

@@ -1,14 +1,13 @@
 import { z } from "zod";
-import { supabase, ORG_ID } from "../supabase.js";
+import type { Ctx } from "../context.js";
 import { STAGE_FROM_DB } from "../constants.js";
 
 export const listTagsSchema = z.object({});
 
-export async function listTags() {
-  const { data, error } = await supabase
+export async function listTags(ctx: Ctx) {
+  const { data, error } = await ctx.db
     .from("tags")
     .select("id, name, color")
-    .eq("organization_id", ORG_ID!)
     .order("name");
   if (error) throw new Error(error.message);
   return data ?? [];
@@ -20,7 +19,7 @@ export const addTagToEntitySchema = z.object({
   tag_id: z.string().uuid(),
 });
 
-export async function addTagToEntity(args: z.infer<typeof addTagToEntitySchema>) {
+export async function addTagToEntity(ctx: Ctx, args: z.infer<typeof addTagToEntitySchema>) {
   const tableMap = {
     contact: "contact_tags",
     company: "company_tags",
@@ -35,20 +34,27 @@ export async function addTagToEntity(args: z.infer<typeof addTagToEntitySchema>)
   const table = tableMap[args.entity_type];
   const col = colMap[args.entity_type];
 
-  const { error } = await supabase
+  // Der Trigger leitet die Organisation der Verknüpfung aus der Elternzeile ab,
+  // eine fremde entity_id scheitert also am WITH CHECK der Policy. Der Tag
+  // dagegen hängt an keinem Elternteil — ohne diese Prüfung ließe sich eine
+  // fremde tag_id an einen eigenen Datensatz hängen.
+  const { data: tag } = await ctx.db
+    .from("tags").select("id").eq("id", args.tag_id).maybeSingle();
+  if (!tag) throw new Error(`Tag ${args.tag_id} not found`);
+
+  const { error } = await ctx.db
     .from(table as string)
     .upsert({ [col]: args.entity_id, tag_id: args.tag_id });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`Could not tag ${args.entity_type} ${args.entity_id}: ${error.message}`);
   return { message: `Tag added to ${args.entity_type}` };
 }
 
 export const getPipelineStatsSchema = z.object({});
 
-export async function getPipelineStats() {
-  const { data: deals, error } = await supabase
+export async function getPipelineStats(ctx: Ctx) {
+  const { data: deals, error } = await ctx.db
     .from("deals")
     .select("stage, target_volume")
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null);
   if (error) throw new Error(error.message);
 
@@ -60,22 +66,19 @@ export async function getPipelineStats() {
     stats[stage].total_volume += d.target_volume ?? 0;
   });
 
-  const { count: contactCount } = await supabase
+  const { count: contactCount } = await ctx.db
     .from("contacts")
     .select("id", { count: "exact", head: true })
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null);
 
-  const { count: companyCount } = await supabase
+  const { count: companyCount } = await ctx.db
     .from("companies")
     .select("id", { count: "exact", head: true })
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null);
 
-  const { count: openTaskCount } = await supabase
+  const { count: openTaskCount } = await ctx.db
     .from("tasks")
     .select("id", { count: "exact", head: true })
-    .eq("organization_id", ORG_ID!)
     .is("deleted_at", null)
     .neq("status", "completed");
 
