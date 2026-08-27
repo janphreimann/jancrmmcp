@@ -1,10 +1,11 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import { anonClient } from "./supabase.js";
+import { anonClient, userClient } from "./supabase.js";
+import { ISSUER_URL } from "./issuer.js";
 
 // ─── Token-Format ────────────────────────────────────────────────────────────
 //
@@ -76,6 +77,15 @@ interface CodePayload extends Session { t: "code"; c: string; ch: string; r: str
 interface AccessPayload extends Session { t: "token"; c: string; exp: number }
 interface RefreshPayload { t: "refresh"; c: string; sub: string; rt: string; exp: number }
 
+/**
+ * Trägt die OAuth-Parameter (client_id, code_challenge, redirect_uri, state)
+ * über den Umweg durch die Mailbox des Nutzers — der Server ist zustandslos,
+ * also müssen sie in der `emailRedirectTo`-URL des Magic-Links mitreisen statt
+ * in einer Session/Tabelle zu warten. Kurze Lebensdauer, weil sie ab dem
+ * Mailversand nutzlos werden, sobald der Nutzer nicht rechtzeitig klickt.
+ */
+interface PendingPayload { t: "pending"; c: string; ch: string; r: string; s?: string; exp: number }
+
 const REFRESH_TOKEN_TTL = 30 * 24 * 3600; // 30 Tage
 
 /**
@@ -143,6 +153,23 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+const PAGE_STYLE = `
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
+    .card{background:#fff;border-radius:16px;padding:2rem;max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+    h1{font-size:1.2rem;font-weight:600;margin-bottom:.5rem}
+    .sub{color:#666;font-size:.875rem;margin-bottom:1.5rem;line-height:1.5}
+    .client{font-weight:600;color:#111}
+    label{display:block;font-size:.85rem;font-weight:500;margin-bottom:.4rem;color:#333}
+    input[type=email]{width:100%;padding:.7rem 1rem;border:1px solid #ddd;border-radius:8px;font-size:1rem;outline:none;transition:border .2s}
+    input:focus{border-color:#2563eb}
+    .field{margin-bottom:1rem}
+    .error{color:#dc2626;font-size:.85rem;margin-bottom:1rem;padding:.6rem;background:#fef2f2;border-radius:6px}
+    button{width:100%;margin-top:.5rem;padding:.8rem;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:500;cursor:pointer;transition:background .2s}
+    button:hover{background:#1d4ed8}
+    .note{margin-top:1.2rem;font-size:.78rem;color:#999;text-align:center}
+`;
+
 function authPage(opts: {
   clientName?: string;
   redirectUri: string;
@@ -158,27 +185,12 @@ function authPage(opts: {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Jan CRM – Zugriff erlauben</title>
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
-    .card{background:#fff;border-radius:16px;padding:2rem;max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08)}
-    h1{font-size:1.2rem;font-weight:600;margin-bottom:.5rem}
-    .sub{color:#666;font-size:.875rem;margin-bottom:1.5rem;line-height:1.5}
-    .client{font-weight:600;color:#111}
-    label{display:block;font-size:.85rem;font-weight:500;margin-bottom:.4rem;color:#333}
-    input[type=email],input[type=password]{width:100%;padding:.7rem 1rem;border:1px solid #ddd;border-radius:8px;font-size:1rem;outline:none;transition:border .2s}
-    input:focus{border-color:#2563eb}
-    .field{margin-bottom:1rem}
-    .error{color:#dc2626;font-size:.85rem;margin-bottom:1rem;padding:.6rem;background:#fef2f2;border-radius:6px}
-    button{width:100%;margin-top:.5rem;padding:.8rem;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:500;cursor:pointer;transition:background .2s}
-    button:hover{background:#1d4ed8}
-    .note{margin-top:1.2rem;font-size:.78rem;color:#999;text-align:center}
-  </style>
+  <style>${PAGE_STYLE}</style>
 </head>
 <body>
   <div class="card">
     <h1>Zugriff erlauben</h1>
-    <p class="sub"><span class="client">${esc(opts.clientName ?? "Claude")}</span> möchte auf dein CRM zugreifen und Kontakte, Deals und Aufgaben verwalten. Melde dich mit deinen CRM-Zugangsdaten an — der Zugriff gilt genau für deinen Account und deine Organisation.</p>
+    <p class="sub"><span class="client">${esc(opts.clientName ?? "Claude")}</span> möchte auf dein CRM zugreifen und Kontakte, Deals und Aufgaben verwalten. Melde dich per Magic-Link an — kein Passwort nötig, der Zugriff gilt genau für deinen Account und deine Organisation.</p>
     ${opts.error ? `<div class="error">${esc(opts.error)}</div>` : ""}
     <form method="POST">
       <input type="hidden" name="response_type" value="code">
@@ -191,14 +203,87 @@ function authPage(opts: {
         <label for="email">E-Mail</label>
         <input type="email" id="email" name="email" value="${esc(opts.email ?? "")}" autocomplete="username" autofocus required>
       </div>
-      <div class="field">
-        <label for="password">Passwort</label>
-        <input type="password" id="password" name="password" autocomplete="current-password" required>
-      </div>
-      <button type="submit">Anmelden und erlauben</button>
+      <button type="submit">Magic-Link senden</button>
     </form>
     <p class="note">Der Zugang endet, sobald dein CRM-Konto deaktiviert wird.</p>
   </div>
+</body>
+</html>`;
+}
+
+function checkEmailPage(email: string): string {
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jan CRM – Postfach prüfen</title>
+  <style>${PAGE_STYLE}</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Postfach prüfen</h1>
+    <p class="sub">Falls <span class="client">${esc(email)}</span> ein CRM-Konto hat, ist gerade ein Anmeldelink unterwegs. Öffne ihn in diesem Browser, um die Anmeldung abzuschließen.</p>
+    <p class="note">Der Link ist 10 Minuten gültig und nur einmal verwendbar.</p>
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * Rückkehrseite des Magic-Links. Supabase hängt die Session als URL-**Fragment**
+ * an (`#access_token=...`), das der Server nie zu sehen bekommt — ein kurzes
+ * Inline-Skript liest es aus und reicht es zusammen mit dem `p`-Parameter
+ * (den ausstehenden OAuth-Parametern, siehe `PendingPayload`) an
+ * `/auth/magic-complete` weiter, das den eigentlichen OAuth-Code ausstellt.
+ */
+export function magicCallbackPage(): string {
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jan CRM – Anmeldung</title>
+  <style>${PAGE_STYLE}</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Anmeldung wird abgeschlossen …</h1>
+    <p class="sub" id="msg">Einen Moment bitte.</p>
+  </div>
+  <script>
+    (function () {
+      var hash = new URLSearchParams(window.location.hash.slice(1));
+      var access_token = hash.get("access_token");
+      var refresh_token = hash.get("refresh_token");
+      var p = new URLSearchParams(window.location.search).get("p");
+      var msg = document.getElementById("msg");
+
+      function fail(text) { msg.textContent = text; }
+
+      if (!access_token || !refresh_token || !p) {
+        fail("Der Link ist ungültig oder abgelaufen. Bitte fordere in Claude einen neuen an.");
+        return;
+      }
+
+      fetch("/auth/magic-complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token: access_token, refresh_token: refresh_token, p: p }),
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (data.redirect) {
+            window.location.href = data.redirect;
+          } else {
+            fail(data.error || "Anmeldung fehlgeschlagen. Bitte fordere einen neuen Link an.");
+          }
+        })
+        .catch(function () {
+          fail("Anmeldung fehlgeschlagen. Bitte fordere einen neuen Link an.");
+        });
+    })();
+  </script>
 </body>
 </html>`;
 }
@@ -242,39 +327,27 @@ export const oauthProvider: OAuthServerProvider = {
     }
 
     const email = String(req.body?.email ?? "").trim();
-    const password = String(req.body?.password ?? "");
-
-    // Eine einzige Fehlermeldung für jeden Fehlschlag — sonst verrät die Seite,
-    // welche Adressen ein Konto haben (Leitplanke 7, kein Account-Enumeration).
-    const GENERIC = "E-Mail oder Passwort ist falsch.";
-
-    const { data, error } = await anonClient().auth.signInWithPassword({ email, password });
-    if (error || !data.session || !data.user) {
-      res.status(200).send(page(GENERIC, email));
+    if (!email) {
+      res.status(200).send(page("Bitte gib deine E-Mail-Adresse ein.", email));
       return;
     }
 
-    // Eine bestätigte Adresse ist Voraussetzung — dieselbe Leitplanke wie beim
-    // Gründen und Annehmen im CRM. Supabase lehnt unbestätigte Anmeldungen in
-    // der Regel schon selbst ab; die Prüfung steht hier, damit sie nicht an
-    // einer Projekteinstellung hängt.
-    if (!data.user.email_confirmed_at) {
-      res.status(200).send(page("Bitte bestätige zuerst deine E-Mail-Adresse.", email));
-      return;
-    }
-
-    const session: Session = {
-      sub: data.user.id,
-      at: data.session.access_token,
-      rt: data.session.refresh_token,
+    const pending: PendingPayload = {
+      t: "pending",
+      c: client.client_id,
+      ch: params.codeChallenge,
+      r: params.redirectUri,
+      s: state,
+      exp: Date.now() + 10 * 60 * 1000,
     };
+    const redirectTo = `${ISSUER_URL.toString().replace(/\/$/, "")}/auth/magic-callback?p=${encodeURIComponent(seal(pending))}`;
 
-    const code = issueAuthCode(client.client_id, params.codeChallenge, params.redirectUri, session);
-    const url = new URL(params.redirectUri);
-    url.searchParams.set("code", code);
-    // state is required by Claude.ai — always include it if present
-    if (state) url.searchParams.set("state", state);
-    res.redirect(url.toString());
+    // Fehler von signInWithOtp wird bewusst nicht unterschieden — dieselbe
+    // "Postfach prüfen"-Seite für existierende wie für unbekannte Adressen,
+    // sonst wird das Formular zum Account-Enumeration-Orakel (wie im
+    // CRM-Web-Login, CLAUDE.md Leitplanke 7).
+    await anonClient().auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
+    res.status(200).send(checkEmailPage(email));
   },
 
   async challengeForAuthorizationCode(
@@ -337,3 +410,48 @@ export const oauthProvider: OAuthServerProvider = {
     };
   },
 };
+
+/**
+ * Nimmt die per Magic-Link erhaltene Supabase-Session entgegen (aus dem
+ * URL-Fragment, das `magicCallbackPage()`s Inline-Skript ausgelesen hat) und
+ * schließt damit den ursprünglichen OAuth-`authorize()`-Aufruf ab — exakt
+ * derselbe letzte Schritt wie am Ende des früheren Passwort-Pfads
+ * (`issueAuthCode` + Redirect mit `?code=`), nur von hier statt von dort aus.
+ */
+export async function handleMagicComplete(req: Request, res: Response): Promise<void> {
+  const { access_token, refresh_token, p } = (req.body ?? {}) as {
+    access_token?: string;
+    refresh_token?: string;
+    p?: string;
+  };
+
+  if (!access_token || !refresh_token || !p) {
+    res.status(400).json({ error: "Anmeldung ist unvollständig. Bitte erneut versuchen." });
+    return;
+  }
+
+  const pending = open<PendingPayload>(p);
+  if (!pending || pending.t !== "pending") {
+    res.status(400).json({ error: "Anmeldung ist ungültig. Bitte fordere einen neuen Link an." });
+    return;
+  }
+  if (Date.now() > pending.exp) {
+    res.status(400).json({ error: "Anmeldung ist abgelaufen. Bitte fordere einen neuen Link an." });
+    return;
+  }
+
+  // Bestätigt, dass der Access-Token echt und aktuell ist — Supabase prüft
+  // Signatur und Ablauf serverseitig, statt dass wir dem Client blind glauben.
+  const { data, error } = await userClient(access_token).auth.getUser();
+  if (error || !data.user) {
+    res.status(401).json({ error: "Sitzung ist ungültig. Bitte fordere einen neuen Link an." });
+    return;
+  }
+
+  const session: Session = { sub: data.user.id, at: access_token, rt: refresh_token };
+  const code = issueAuthCode(pending.c, pending.ch, pending.r, session);
+  const url = new URL(pending.r);
+  url.searchParams.set("code", code);
+  if (pending.s) url.searchParams.set("state", pending.s);
+  res.json({ redirect: url.toString() });
+}

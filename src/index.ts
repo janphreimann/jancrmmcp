@@ -4,18 +4,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
-import { oauthProvider } from "./oauth.js";
+import { oauthProvider, magicCallbackPage, handleMagicComplete } from "./oauth.js";
 import { buildContext } from "./context.js";
 import { registerAllTools } from "./tools/index.js";
-
-// Issuer URL must be known at startup (not per-request) because express-rate-limit
-// inside mcpAuthRouter must be created once, not per request (Vercel serverless constraint).
-const ISSUER_URL = new URL(
-  process.env.SERVER_URL ??
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : `http://localhost:${process.env.PORT ?? 3000}`)
-);
+import { ISSUER_URL } from "./issuer.js";
 
 const app = express();
 app.set("trust proxy", 1); // Required for correct rate limiting behind Vercel's proxy
@@ -28,6 +20,17 @@ app.get("/health", (_req, res) => {
 
 // OAuth endpoints — router created ONCE at startup to satisfy express-rate-limit constraints
 app.use(mcpAuthRouter({ provider: oauthProvider, issuerUrl: ISSUER_URL }));
+
+// Magic-Link-Rückkehr: die E-Mail-App/der Browser landet hier, nachdem der
+// Nutzer auf den Supabase-Magic-Link geklickt hat. Supabase hängt die Session
+// als URL-Fragment an (#access_token=...), das der Server nicht lesen kann —
+// deshalb eine dünne HTML-Seite mit Inline-Skript, die das Fragment ausliest
+// und an /auth/magic-complete weiterreicht. Siehe oauth.ts für den Kontext.
+app.get("/auth/magic-callback", (_req, res) => {
+  res.type("html").send(magicCallbackPage());
+});
+
+app.post("/auth/magic-complete", handleMagicComplete);
 
 // MCP endpoint — protected by OAuth Bearer token
 app.all(
