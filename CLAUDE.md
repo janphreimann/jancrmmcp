@@ -106,6 +106,37 @@ fest `ctx.userId` und darf nie aus den Tool-Argumenten stammen. Wer `ctx.admin`
 an einer weiteren Stelle braucht, begründet das hier — sonst ist `ctx.db`
 richtig.
 
+## Leitplanken am Anmeldeprozess
+
+Der Login (`src/oauth.ts`) steht offen im Netz und stellt am Ende eine
+vollwertige CRM-Sitzung aus. Drei Schranken sichern ihn ab — keine davon ohne
+Ersatz entfernen:
+
+- **Redirect-URI-Allowlist** (`redirectUriAllowed`). Die Dynamic Client
+  Registration ist offen, also darf `redirect_uri` nicht frei wählbar sein:
+  sonst lässt sich ein Magic-Link an eine fremde Adresse ausstellen und der
+  fertige OAuth-Code landet beim Angreifer, sobald geklickt wird. Geprüft wird
+  dreifach — bei `registerClient`, bei `getClient` (damit früher ausgestellte
+  `client_id`s nicht weitergelten) und in `handleMagicComplete`. Ein weiterer
+  Client kommt über `MCP_ALLOWED_REDIRECT_HOSTS` dazu, nicht über eine
+  Ausnahme im Code.
+- **Browser-Bindung des Magic-Links.** Beim Absenden des Formulars geht ein
+  Zufallswert als `mcp_login`-Cookie an den Browser, nur sein SHA-256 reist im
+  versiegelten `p`-Parameter mit. Ohne passendes Cookie schließt
+  `handleMagicComplete` nicht ab. Preis dafür: der Link muss im selben Browser
+  geöffnet werden, in dem die Anmeldung begann — die Seiten sagen das.
+- **Bestätigungsklick auf der Rückkehrseite.** `magicCallbackPage()` rendert
+  Client-Name und Ziel-Host serverseitig aus `p` und leitet erst nach einem
+  Klick weiter. Kein automatischer Abschluss — wer den Flow nicht selbst
+  gestartet hat, soll das sehen, bevor etwas ausgestellt wird.
+
+`signInWithOtp` läuft mit **`shouldCreateUser: false`**. Der Default legt für
+jede unbekannte Adresse ein Supabase-Konto an; das Formular wäre damit eine
+offene Konto-Fabrik und ein Mail-Versender für beliebige Empfänger. Anmelden
+darf sich hier nur, wer im CRM schon existiert. Die Antwortseite bleibt für
+bekannte wie unbekannte Adressen identisch — der Enumerationsschutz hängt
+daran.
+
 Edge Functions ruft der Server mit `ctx.accessToken` auf, nicht mit dem
 Service-Key: `mail-create-draft` löst das Postfach dann selbst über
 `auth.uid()` auf.

@@ -25,9 +25,12 @@ app.use(mcpAuthRouter({ provider: oauthProvider, issuerUrl: ISSUER_URL }));
 // Nutzer auf den Supabase-Magic-Link geklickt hat. Supabase hängt die Session
 // als URL-Fragment an (#access_token=...), das der Server nicht lesen kann —
 // deshalb eine dünne HTML-Seite mit Inline-Skript, die das Fragment ausliest
-// und an /auth/magic-complete weiterreicht. Siehe oauth.ts für den Kontext.
-app.get("/auth/magic-callback", (_req, res) => {
-  res.type("html").send(magicCallbackPage());
+// und nach einer Bestätigung an /auth/magic-complete weiterreicht. Der
+// `p`-Parameter geht an die Seite, weil sie Client und Ziel-Host anzeigt —
+// serverseitig gerendert, damit die Bestätigung etwas wert ist. Siehe oauth.ts.
+app.get("/auth/magic-callback", (req, res) => {
+  const p = typeof req.query.p === "string" ? req.query.p : "";
+  res.type("html").set("Cache-Control", "no-store").send(magicCallbackPage(p));
 });
 
 app.post("/auth/magic-complete", handleMagicComplete);

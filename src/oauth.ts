@@ -4,6 +4,7 @@ import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprot
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { InvalidClientMetadataError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { anonClient, userClient } from "./supabase.js";
 import { ISSUER_URL } from "./issuer.js";
 
@@ -64,6 +65,87 @@ function hmacVerify(token: string): string | null {
   return data;
 }
 
+// ─── Redirect-URI-Allowlist ──────────────────────────────────────────────────
+//
+// Die Dynamic Client Registration steht offen — jeder darf sich einen Client
+// anlegen. Ohne Schranke darf er dabei auch `redirect_uri` frei wählen, und
+// dann genügt es, den Magic-Link auf eine fremde Adresse ausstellen zu lassen:
+// klickt der Nutzer, landet der fertige OAuth-Code beim Angreifer. Deshalb
+// hier eine feste Liste — der Connector bedient realistisch nur Claude plus
+// lokal laufende Clients.
+//
+// Geprüft wird an drei Stellen: bei der Registrierung, beim Nachschlagen des
+// Clients (damit früher ausgestellte client_ids nicht weitergelten) und noch
+// einmal, bevor der Code tatsächlich ausgeliefert wird.
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+const ALLOWED_REDIRECT_HOSTS = new Set([
+  "claude.ai",
+  "www.claude.ai",
+  "claude.com",
+  "www.claude.com",
+  ...(process.env.MCP_ALLOWED_REDIRECT_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean),
+]);
+
+export function redirectUriAllowed(uri: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(uri);
+  } catch {
+    return false;
+  }
+  // Lokale Clients (Claude Desktop, MCP-Inspector) bekommen vom OS einen
+  // beliebigen Port — Host prüfen genügt, http ist hier unbedenklich.
+  if (LOOPBACK_HOSTS.has(u.hostname)) return u.protocol === "http:" || u.protocol === "https:";
+  if (u.protocol !== "https:") return false;
+  return ALLOWED_REDIRECT_HOSTS.has(u.hostname.toLowerCase());
+}
+
+// ─── Browser-Bindung des Magic-Links ─────────────────────────────────────────
+//
+// Der Link darf nur in dem Browser etwas bewirken, in dem die Anmeldung
+// gestartet wurde. Sonst kann jeder einen Anmeldelink an eine fremde Adresse
+// auslösen und hoffen, dass geklickt wird. Beim Absenden des Formulars geht
+// ein Zufallswert als Cookie an den Browser, dessen Hash im versiegelten
+// `p`-Payload mitreist; beim Abschluss müssen beide zusammenpassen.
+
+const LOGIN_COOKIE = "mcp_login";
+const LOGIN_COOKIE_TTL_MS = 10 * 60 * 1000;
+
+function sha256(value: string): Buffer {
+  return createHash("sha256").update(value).digest();
+}
+
+function readCookie(header: string | undefined, name: string): string | null {
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** Client-Metadaten aus dem signierten client_id zurücklesen. */
+function decodeClient(clientId: string): OAuthClientInformationFull | undefined {
+  const data = hmacVerify(clientId);
+  if (!data) return undefined;
+  try {
+    return { ...(JSON.parse(data) as Omit<OAuthClientInformationFull, "client_id">), client_id: clientId };
+  } catch {
+    return undefined;
+  }
+}
+
 // ─── Nutzlasten ──────────────────────────────────────────────────────────────
 
 /** Supabase-Sitzung des angemeldeten Nutzers. */
@@ -84,7 +166,16 @@ interface RefreshPayload { t: "refresh"; c: string; sub: string; rt: string; exp
  * in einer Session/Tabelle zu warten. Kurze Lebensdauer, weil sie ab dem
  * Mailversand nutzlos werden, sobald der Nutzer nicht rechtzeitig klickt.
  */
-interface PendingPayload { t: "pending"; c: string; ch: string; r: string; s?: string; exp: number }
+interface PendingPayload {
+  t: "pending";
+  c: string;
+  ch: string;
+  r: string;
+  s?: string;
+  /** SHA-256 des Login-Cookies — bindet den Link an den startenden Browser. */
+  n: string;
+  exp: number;
+}
 
 const REFRESH_TOKEN_TTL = 30 * 24 * 3600; // 30 Tage
 
@@ -128,6 +219,17 @@ const clientsStore: OAuthRegisteredClientsStore = {
   registerClient(
     client: Omit<OAuthClientInformationFull, "client_id" | "client_id_issued_at">
   ): OAuthClientInformationFull {
+    const uris = client.redirect_uris ?? [];
+    if (uris.length === 0) {
+      throw new InvalidClientMetadataError("At least one redirect_uri is required");
+    }
+    const rejected = uris.filter((uri) => !redirectUriAllowed(uri));
+    if (rejected.length > 0) {
+      throw new InvalidClientMetadataError(
+        `redirect_uri not permitted for this server: ${rejected.join(", ")}`
+      );
+    }
+
     const payload = JSON.stringify({
       ...client,
       client_id_issued_at: Math.floor(Date.now() / 1000),
@@ -137,13 +239,13 @@ const clientsStore: OAuthRegisteredClientsStore = {
   },
 
   getClient(clientId: string): OAuthClientInformationFull | undefined {
-    const data = hmacVerify(clientId);
-    if (!data) return undefined;
-    try {
-      return { ...(JSON.parse(data) as Omit<OAuthClientInformationFull, "client_id">), client_id: clientId };
-    } catch {
-      return undefined;
-    }
+    const client = decodeClient(clientId);
+    if (!client) return undefined;
+    // Auch hier prüfen, nicht nur bei der Registrierung: client_ids sind
+    // signierte Blobs ohne Ablauf, ein vor der Allowlist ausgestellter bliebe
+    // sonst für immer gültig.
+    if (!(client.redirect_uris ?? []).every(redirectUriAllowed)) return undefined;
+    return client;
   },
 };
 
@@ -168,6 +270,9 @@ const PAGE_STYLE = `
     button{width:100%;margin-top:.5rem;padding:.8rem;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:500;cursor:pointer;transition:background .2s}
     button:hover{background:#1d4ed8}
     .note{margin-top:1.2rem;font-size:.78rem;color:#999;text-align:center}
+    .target{background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:.75rem 1rem;font-size:.85rem;color:#333;margin-bottom:1rem;word-break:break-all}
+    .target b{display:block;font-size:.72rem;font-weight:600;color:#777;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.2rem}
+    button[disabled]{background:#93b4f5;cursor:default}
 `;
 
 function authPage(opts: {
@@ -223,8 +328,26 @@ function checkEmailPage(email: string): string {
 <body>
   <div class="card">
     <h1>Postfach prüfen</h1>
-    <p class="sub">Falls <span class="client">${esc(email)}</span> ein CRM-Konto hat, ist gerade ein Anmeldelink unterwegs. Öffne ihn in diesem Browser, um die Anmeldung abzuschließen.</p>
+    <p class="sub">Falls <span class="client">${esc(email)}</span> ein CRM-Konto hat, ist gerade ein Anmeldelink unterwegs. Öffne ihn <b>in diesem Browser</b> — anderswo funktioniert er nicht, das schützt dein Konto davor, dass jemand anders die Anmeldung für dich anstößt.</p>
     <p class="note">Der Link ist 10 Minuten gültig und nur einmal verwendbar.</p>
+  </div>
+</body>
+</html>`;
+}
+
+function noticePage(title: string, message: string): string {
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jan CRM – ${esc(title)}</title>
+  <style>${PAGE_STYLE}</style>
+</head>
+<body>
+  <div class="card">
+    <h1>${esc(title)}</h1>
+    <p class="sub">${esc(message)}</p>
   </div>
 </body>
 </html>`;
@@ -236,8 +359,25 @@ function checkEmailPage(email: string): string {
  * Inline-Skript liest es aus und reicht es zusammen mit dem `p`-Parameter
  * (den ausstehenden OAuth-Parametern, siehe `PendingPayload`) an
  * `/auth/magic-complete` weiter, das den eigentlichen OAuth-Code ausstellt.
+ *
+ * Bewusst **kein** automatischer Abschluss: wohin der Code danach geht, steht
+ * im `p`-Parameter, und den hat nicht zwingend der Nutzer selbst erzeugt. Wer
+ * hier landet, ohne in Claude eine Verbindung gestartet zu haben, soll das
+ * sehen können, bevor irgendetwas ausgestellt wird — deshalb rendert der
+ * Server Client und Ziel-Host in die Seite und wartet auf einen Klick.
  */
-export function magicCallbackPage(): string {
+export function magicCallbackPage(p: string): string {
+  const pending = p ? open<PendingPayload>(p) : null;
+  if (!pending || pending.t !== "pending" || Date.now() > pending.exp || !redirectUriAllowed(pending.r)) {
+    return noticePage(
+      "Anmeldung",
+      "Der Link ist ungültig oder abgelaufen. Bitte fordere in Claude einen neuen an."
+    );
+  }
+
+  const clientName = decodeClient(pending.c)?.client_name ?? "Claude";
+  const targetHost = new URL(pending.r).host;
+
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -248,8 +388,11 @@ export function magicCallbackPage(): string {
 </head>
 <body>
   <div class="card">
-    <h1>Anmeldung wird abgeschlossen …</h1>
-    <p class="sub" id="msg">Einen Moment bitte.</p>
+    <h1>Zugriff bestätigen</h1>
+    <p class="sub">Du bist angemeldet. <span class="client">${esc(clientName)}</span> erhält damit Zugriff auf dein CRM — Kontakte, Deals, Aufgaben, Dokumente und Kalender.</p>
+    <div class="target"><b>Weiterleitung an</b>${esc(targetHost)}</div>
+    <p class="sub" id="msg">Hast du diese Verbindung nicht selbst in Claude gestartet, schließe diese Seite einfach.</p>
+    <button type="button" id="go">Zugriff erlauben</button>
   </div>
   <script>
     (function () {
@@ -258,30 +401,37 @@ export function magicCallbackPage(): string {
       var refresh_token = hash.get("refresh_token");
       var p = new URLSearchParams(window.location.search).get("p");
       var msg = document.getElementById("msg");
+      var btn = document.getElementById("go");
 
-      function fail(text) { msg.textContent = text; }
+      function fail(text) { msg.textContent = text; btn.disabled = true; }
 
       if (!access_token || !refresh_token || !p) {
         fail("Der Link ist ungültig oder abgelaufen. Bitte fordere in Claude einen neuen an.");
         return;
       }
 
-      fetch("/auth/magic-complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ access_token: access_token, refresh_token: refresh_token, p: p }),
-      })
-        .then(function (res) { return res.json(); })
-        .then(function (data) {
-          if (data.redirect) {
-            window.location.href = data.redirect;
-          } else {
-            fail(data.error || "Anmeldung fehlgeschlagen. Bitte fordere einen neuen Link an.");
-          }
+      btn.addEventListener("click", function () {
+        btn.disabled = true;
+        msg.textContent = "Anmeldung wird abgeschlossen …";
+
+        fetch("/auth/magic-complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ access_token: access_token, refresh_token: refresh_token, p: p }),
         })
-        .catch(function () {
-          fail("Anmeldung fehlgeschlagen. Bitte fordere einen neuen Link an.");
-        });
+          .then(function (res) { return res.json(); })
+          .then(function (data) {
+            if (data.redirect) {
+              window.location.href = data.redirect;
+            } else {
+              fail(data.error || "Anmeldung fehlgeschlagen. Bitte fordere einen neuen Link an.");
+            }
+          })
+          .catch(function () {
+            fail("Anmeldung fehlgeschlagen. Bitte fordere einen neuen Link an.");
+          });
+      });
     })();
   </script>
 </body>
@@ -332,13 +482,32 @@ export const oauthProvider: OAuthServerProvider = {
       return;
     }
 
+    // Zweite Schranke neben der Allowlist bei der Registrierung: hier steht die
+    // URL, die tatsächlich im Magic-Link mitreist.
+    if (!redirectUriAllowed(params.redirectUri)) {
+      res.status(400).send(page("Dieser Client ist für diesen Server nicht zugelassen."));
+      return;
+    }
+
+    // Bindet den gleich versendeten Link an genau diesen Browser: der Klartext
+    // geht als HttpOnly-Cookie an den Nutzer, nur sein Hash reist im Link mit.
+    const nonce = randomBytes(32).toString("base64url");
+    res.cookie(LOGIN_COOKIE, nonce, {
+      httpOnly: true,
+      secure: ISSUER_URL.protocol === "https:",
+      sameSite: "lax", // der Klick kommt als Top-Level-Navigation aus der Mail
+      path: "/",
+      maxAge: LOGIN_COOKIE_TTL_MS,
+    });
+
     const pending: PendingPayload = {
       t: "pending",
       c: client.client_id,
       ch: params.codeChallenge,
       r: params.redirectUri,
       s: state,
-      exp: Date.now() + 10 * 60 * 1000,
+      n: sha256(nonce).toString("base64url"),
+      exp: Date.now() + LOGIN_COOKIE_TTL_MS,
     };
     const redirectTo = `${ISSUER_URL.toString().replace(/\/$/, "")}/auth/magic-callback?p=${encodeURIComponent(seal(pending))}`;
 
@@ -346,7 +515,16 @@ export const oauthProvider: OAuthServerProvider = {
     // "Postfach prüfen"-Seite für existierende wie für unbekannte Adressen,
     // sonst wird das Formular zum Account-Enumeration-Orakel (wie im
     // CRM-Web-Login, CLAUDE.md Leitplanke 7).
-    await anonClient().auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
+    //
+    // `shouldCreateUser: false` ist dabei entscheidend: der Default legt für
+    // jede unbekannte Adresse ein Supabase-Konto an — dieses Formular steht
+    // offen im Netz und wäre damit sowohl eine Konto-Fabrik als auch ein
+    // Mail-Versender für beliebige Empfänger. Anmelden darf sich hier nur, wer
+    // im CRM schon existiert; die Antwortseite bleibt für beide Fälle gleich.
+    await anonClient().auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: redirectTo, shouldCreateUser: false },
+    });
     res.status(200).send(checkEmailPage(email));
   },
 
@@ -440,6 +618,30 @@ export async function handleMagicComplete(req: Request, res: Response): Promise<
     return;
   }
 
+  // Letzte Schranke vor dem Ausstellen: das Ziel muss immer noch zugelassen
+  // sein. Ein `p`, das vor der Allowlist versiegelt wurde, trägt sonst eine
+  // fremde redirect_uri unbemerkt bis hierher.
+  if (!redirectUriAllowed(pending.r)) {
+    res.status(400).json({ error: "Dieser Client ist für diesen Server nicht zugelassen." });
+    return;
+  }
+
+  // Der Link gilt nur in dem Browser, in dem die Anmeldung gestartet wurde.
+  // Ohne diese Prüfung genügt es, einen Anmeldelink an eine fremde Adresse
+  // auslösen zu lassen und auf den Klick zu warten — der fertige OAuth-Code
+  // ginge dann an den, der den Flow gestartet hat.
+  const nonce = readCookie(req.headers.cookie, LOGIN_COOKIE);
+  const expected = Buffer.from(pending.n, "base64url");
+  const actual = nonce ? sha256(nonce) : Buffer.alloc(0);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    res.status(400).json({
+      error:
+        "Dieser Anmeldelink gehört zu einem anderen Browser. Öffne ihn dort, " +
+        "wo du die Anmeldung gestartet hast, oder fordere in Claude einen neuen Link an.",
+    });
+    return;
+  }
+
   // Bestätigt, dass der Access-Token echt und aktuell ist — Supabase prüft
   // Signatur und Ablauf serverseitig, statt dass wir dem Client blind glauben.
   const { data, error } = await userClient(access_token).auth.getUser();
@@ -447,6 +649,9 @@ export async function handleMagicComplete(req: Request, res: Response): Promise<
     res.status(401).json({ error: "Sitzung ist ungültig. Bitte fordere einen neuen Link an." });
     return;
   }
+
+  // Einmal verwendet, ist die Bindung verbraucht.
+  res.clearCookie(LOGIN_COOKIE, { path: "/" });
 
   const session: Session = { sub: data.user.id, at: access_token, rt: refresh_token };
   const code = issueAuthCode(pending.c, pending.ch, pending.r, session);
