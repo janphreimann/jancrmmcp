@@ -54,7 +54,7 @@ export function userClient(accessToken: string): SupabaseClient {
  * flags it as AI-created, `agent_approved: false` means the CRM UI shows an
  * "Agent" badge with an Approve action until a human confirms it. Any new
  * create-tool added later must spread this into its insert payload — do not
- * insert into contacts/companies/deals/tasks/interactions/documents/
+ * insert into contacts/companies/projects/tasks/interactions/documents/
  * document_folders without it.
  */
 export function agentMeta() {

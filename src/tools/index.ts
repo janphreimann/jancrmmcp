@@ -13,12 +13,17 @@ import {
   updateCompanySchema, updateCompany,
 } from "./companies.js";
 import {
-  searchDealsSchema, searchDeals,
-  getDealSchema, getDeal,
-  createDealSchema, createDeal,
-  updateDealSchema, updateDeal,
-} from "./deals.js";
-import { createTaskSchema, createTask } from "./tasks.js";
+  searchProjectsSchema, searchProjects,
+  getProjectSchema, getProject,
+  createProjectSchema, createProject,
+  updateProjectSchema, updateProject,
+} from "./projects.js";
+import {
+  createTaskSchema, createTask,
+  searchTasksSchema, searchTasks,
+  getTaskSchema, getTask,
+  updateTaskSchema, updateTask,
+} from "./tasks.js";
 import { createCalendarEventSchema, createCalendarEvent } from "./calendar.js";
 import { createEmailDraftSchema, createEmailDraft } from "./mail.js";
 import {
@@ -107,38 +112,59 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
   );
 
   server.tool(
-    "search_deals",
-    "Search deals by name, stage, deal type, or linked contact — fuzzy, tolerates typos",
-    searchDealsSchema.shape,
-    async (args) => ok(await searchDeals(ctx, args as Parameters<typeof searchDeals>[1]))
+    "search_projects",
+    "Search projects by name, stage, project type, or linked contact — fuzzy, tolerates typos",
+    searchProjectsSchema.shape,
+    async (args) => ok(await searchProjects(ctx, args as Parameters<typeof searchProjects>[1]))
   );
 
   server.tool(
-    "get_deal",
-    "Get full deal details by UUID, including linked contacts, companies and tags",
-    getDealSchema.shape,
-    async (args) => ok(await getDeal(ctx, args as Parameters<typeof getDeal>[1]))
+    "get_project",
+    "Get full project details by UUID, including linked contacts, companies and tags",
+    getProjectSchema.shape,
+    async (args) => ok(await getProject(ctx, args as Parameters<typeof getProject>[1]))
   );
 
   server.tool(
-    "create_deal",
-    "Create a new deal with optional linked contacts and companies",
-    createDealSchema.shape,
-    async (args) => ok(await createDeal(ctx, args as Parameters<typeof createDeal>[1]))
+    "create_project",
+    "Create a new project with optional linked contacts and companies",
+    createProjectSchema.shape,
+    async (args) => ok(await createProject(ctx, args as Parameters<typeof createProject>[1]))
   );
 
   server.tool(
-    "update_deal",
-    "Update a deal — stage, description, volumes, dates",
-    updateDealSchema.shape,
-    async (args) => ok(await updateDeal(ctx, args as Parameters<typeof updateDeal>[1]))
+    "update_project",
+    "Update a project — stage, description, volumes, dates",
+    updateProjectSchema.shape,
+    async (args) => ok(await updateProject(ctx, args as Parameters<typeof updateProject>[1]))
   );
 
   server.tool(
     "create_task",
-    "Create a task optionally linked to a contact, company, or deal",
+    "Create a task optionally linked to a contact, company, or project",
     createTaskSchema.shape,
     async (args) => ok(await createTask(ctx, args as Parameters<typeof createTask>[1]))
+  );
+
+  server.tool(
+    "search_tasks",
+    "Search tasks by title, status, priority, due date range, or linked contact/company/project",
+    searchTasksSchema.shape,
+    async (args) => ok(await searchTasks(ctx, args as Parameters<typeof searchTasks>[1]))
+  );
+
+  server.tool(
+    "get_task",
+    "Get full task details by UUID",
+    getTaskSchema.shape,
+    async (args) => ok(await getTask(ctx, args as Parameters<typeof getTask>[1]))
+  );
+
+  server.tool(
+    "update_task",
+    "Update a task — title, description, due date, priority, status, or links. Use this to mark a task done (status: Completed).",
+    updateTaskSchema.shape,
+    async (args) => ok(await updateTask(ctx, args as Parameters<typeof updateTask>[1]))
   );
 
   server.tool(
@@ -164,14 +190,14 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "add_tag_to_entity",
-    "Add a tag to a contact, company, or deal",
+    "Add a tag to a contact, company, or project",
     addTagToEntitySchema.shape,
     async (args) => ok(await addTagToEntity(ctx, args as Parameters<typeof addTagToEntity>[1]))
   );
 
   server.tool(
     "get_pipeline_stats",
-    "Get pipeline statistics: deal counts by stage, total contacts, companies, open tasks",
+    "Get pipeline statistics: project counts by stage, total contacts, companies, open tasks",
     getPipelineStatsSchema.shape,
     async () => ok(await getPipelineStats(ctx))
   );

@@ -295,7 +295,7 @@ function authPage(opts: {
 <body>
   <div class="card">
     <h1>Zugriff erlauben</h1>
-    <p class="sub"><span class="client">${esc(opts.clientName ?? "Claude")}</span> möchte auf dein CRM zugreifen und Kontakte, Deals und Aufgaben verwalten. Melde dich per Magic-Link an — kein Passwort nötig, der Zugriff gilt genau für deinen Account und deine Organisation.</p>
+    <p class="sub"><span class="client">${esc(opts.clientName ?? "Claude")}</span> möchte auf dein CRM zugreifen und Kontakte, Projekte und Aufgaben verwalten. Melde dich per Magic-Link an — kein Passwort nötig, der Zugriff gilt genau für deinen Account und deine Organisation.</p>
     ${opts.error ? `<div class="error">${esc(opts.error)}</div>` : ""}
     <form method="POST">
       <input type="hidden" name="response_type" value="code">
@@ -389,7 +389,7 @@ export function magicCallbackPage(p: string): string {
 <body>
   <div class="card">
     <h1>Zugriff bestätigen</h1>
-    <p class="sub">Du bist angemeldet. <span class="client">${esc(clientName)}</span> erhält damit Zugriff auf dein CRM — Kontakte, Deals, Aufgaben, Dokumente und Kalender.</p>
+    <p class="sub">Du bist angemeldet. <span class="client">${esc(clientName)}</span> erhält damit Zugriff auf dein CRM — Kontakte, Projekte, Aufgaben, Dokumente und Kalender.</p>
     <div class="target"><b>Weiterleitung an</b>${esc(targetHost)}</div>
     <p class="sub" id="msg">Hast du diese Verbindung nicht selbst in Claude gestartet, schließe diese Seite einfach.</p>
     <button type="button" id="go">Zugriff erlauben</button>

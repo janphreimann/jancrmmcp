@@ -14,7 +14,7 @@ export async function listTags(ctx: Ctx) {
 }
 
 export const addTagToEntitySchema = z.object({
-  entity_type: z.enum(["contact", "company", "deal"]),
+  entity_type: z.enum(["contact", "company", "project"]),
   entity_id: z.string().uuid(),
   tag_id: z.string().uuid(),
 });
@@ -23,12 +23,12 @@ export async function addTagToEntity(ctx: Ctx, args: z.infer<typeof addTagToEnti
   const tableMap = {
     contact: "contact_tags",
     company: "company_tags",
-    deal: "deal_tags",
+    project: "project_tags",
   } as const;
   const colMap = {
     contact: "contact_id",
     company: "company_id",
-    deal: "deal_id",
+    project: "project_id",
   } as const;
 
   const table = tableMap[args.entity_type];
@@ -52,14 +52,14 @@ export async function addTagToEntity(ctx: Ctx, args: z.infer<typeof addTagToEnti
 export const getPipelineStatsSchema = z.object({});
 
 export async function getPipelineStats(ctx: Ctx) {
-  const { data: deals, error } = await ctx.db
-    .from("deals")
+  const { data: projects, error } = await ctx.db
+    .from("projects")
     .select("stage, target_volume")
     .is("deleted_at", null);
   if (error) throw new Error(error.message);
 
   const stats: Record<string, { count: number; total_volume: number }> = {};
-  (deals ?? []).forEach((d: { stage: string; target_volume: number | null }) => {
+  (projects ?? []).forEach((d: { stage: string; target_volume: number | null }) => {
     const stage = STAGE_FROM_DB[d.stage] ?? d.stage ?? "Unknown";
     if (!stats[stage]) stats[stage] = { count: 0, total_volume: 0 };
     stats[stage].count++;
@@ -83,7 +83,7 @@ export async function getPipelineStats(ctx: Ctx) {
     .neq("status", "completed");
 
   return {
-    deals_by_stage: stats,
+    projects_by_stage: stats,
     total_contacts: contactCount ?? 0,
     total_companies: companyCount ?? 0,
     open_tasks: openTaskCount ?? 0,

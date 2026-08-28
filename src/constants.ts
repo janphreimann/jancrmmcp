@@ -19,7 +19,13 @@ export const STATUS_TO_DB: Record<string, string> = {
   Postponed: "postponed",
 };
 
-export const DEAL_STAGES = Object.keys(STAGE_TO_DB) as [string, ...string[]];
+export const STATUS_FROM_DB: Record<string, string> = Object.fromEntries(
+  Object.entries(STATUS_TO_DB).map(([k, v]) => [v, k])
+);
+
+export const PROJECT_STAGES = Object.keys(STAGE_TO_DB) as [string, ...string[]];
+
+export const TASK_STATUSES = Object.keys(STATUS_TO_DB) as [string, ...string[]];
 
 export const INTERACTION_TYPES: [string, ...string[]] = [
   "Phone Call",

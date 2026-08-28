@@ -62,7 +62,7 @@ export const listDocumentsSchema = z.object({
 export async function listDocuments(ctx: Ctx, args: z.infer<typeof listDocumentsSchema>) {
   let q = ctx.db
     .from("documents")
-    .select("id, file_name, file_size, description, folder_id, uploaded_at, contact_id, company_id, deal_id")
+    .select("id, file_name, file_size, description, folder_id, uploaded_at, contact_id, company_id, project_id")
     .is("deleted_at", null)
     .order("uploaded_at", { ascending: false })
     .limit(args.limit);
@@ -134,7 +134,7 @@ export async function getDocumentContent(ctx: Ctx, args: z.infer<typeof getDocum
 
 // ─── Document creation & editing ─────────────────────────────────────────────
 
-const entityTypeEnum = z.enum(["contact", "company", "deal", "interaction", "calendar_event", "task", "none"]);
+const entityTypeEnum = z.enum(["contact", "company", "project", "interaction", "calendar_event", "task", "none"]);
 
 /**
  * Der Upload läuft vor dem documents-Insert, die Storage-Policy kann sich zu
@@ -191,7 +191,7 @@ export async function createTextDocument(ctx: Ctx, args: z.infer<typeof createTe
     folder_id: folder_id ?? null,
     contact_id: entity_type === "contact" ? entity_id : null,
     company_id: entity_type === "company" ? entity_id : null,
-    deal_id: entity_type === "deal" ? entity_id : null,
+    project_id: entity_type === "project" ? entity_id : null,
     interaction_id: entity_type === "interaction" ? entity_id : null,
     calendar_event_id: entity_type === "calendar_event" ? entity_id : null,
     task_id: entity_type === "task" ? entity_id : null,
@@ -272,7 +272,7 @@ export async function uploadBinaryDocument(ctx: Ctx, args: z.infer<typeof upload
     folder_id: folder_id ?? null,
     contact_id: entity_type === "contact" ? entity_id : null,
     company_id: entity_type === "company" ? entity_id : null,
-    deal_id: entity_type === "deal" ? entity_id : null,
+    project_id: entity_type === "project" ? entity_id : null,
     interaction_id: entity_type === "interaction" ? entity_id : null,
     calendar_event_id: entity_type === "calendar_event" ? entity_id : null,
     task_id: entity_type === "task" ? entity_id : null,
@@ -347,7 +347,7 @@ export async function updateDocument(ctx: Ctx, args: z.infer<typeof updateDocume
   if (entity_type !== undefined) {
     update.contact_id = entity_type === "contact" ? entity_id : null;
     update.company_id = entity_type === "company" ? entity_id : null;
-    update.deal_id = entity_type === "deal" ? entity_id : null;
+    update.project_id = entity_type === "project" ? entity_id : null;
     update.interaction_id = entity_type === "interaction" ? entity_id : null;
     update.calendar_event_id = entity_type === "calendar_event" ? entity_id : null;
     update.task_id = entity_type === "task" ? entity_id : null;

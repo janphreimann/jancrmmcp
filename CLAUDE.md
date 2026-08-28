@@ -1,6 +1,6 @@
 # crm-mcp-server
 
-MCP server exposing CRM tools (contacts, companies, deals, tasks, calendar
+MCP server exposing CRM tools (contacts, companies, projects, tasks, calendar
 events, documents, folders) to AI agents (Claude, claude.ai connector) backed
 by the same Supabase project as the main CRM webapp (`../janreimanncrm`).
 
@@ -38,7 +38,7 @@ distinguishable from a human-created row in the CRM UI, and requires human
 approval before it's treated as fully trusted data.
 
 This is implemented with two columns, present on every entity table
-(`contacts`, `companies`, `deals`, `tasks`, `interactions`, `documents`,
+(`contacts`, `companies`, `projects`, `tasks`, `interactions`, `documents`,
 `document_folders`, `calendar_events`):
 
 - `created_by_agent boolean not null default false`
@@ -147,5 +147,5 @@ The CRM frontend renders an "Agent" badge with an Approve button
 Approve, `agent_approved` flips to `true` and the badge disappears
 permanently — approval is a one-way switch, there's no "unapprove".
 
-Update-tools (`update_contact`, `update_deal`, etc.) do not touch these
+Update-tools (`update_contact`, `update_project`, etc.) do not touch these
 columns — they only matter at creation time.
