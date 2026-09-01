@@ -24,19 +24,15 @@ export const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE
 });
 
 /**
- * Anonymer Client für den Login auf der OAuth-Seite. Bewusst eine Fabrik und
- * kein Singleton: `signInWithOtp` und `refreshSession` legen die Sitzung im
- * Client ab, ein geteilter Client würde parallele Anmeldungen vermischen.
- *
- * `flowType: "implicit"` ist Absicht, nicht der Default: der Server ist
- * zustandslos (Vercel), ein PKCE-`code_verifier` aus `signInWithOtp` wäre bis
- * zum Klick auf den Magic-Link (nächster, komplett neuer Aufruf) schon
- * verloren. Der klassische implizite Fluss legt die Session stattdessen als
- * URL-Fragment auf die Rückkehrseite — siehe oauth.ts `magicCallbackPage()`.
+ * Anonymer Client für die Device-Code-Anfragen der OAuth-Seite
+ * (`create_mcp_device_grant` / `poll_mcp_device_grant`, siehe oauth.ts) sowie
+ * für `exchangeRefreshToken`. Bewusst eine Fabrik und kein Singleton:
+ * `refreshSession` legt die Sitzung im Client ab, ein geteilter Client würde
+ * parallele Anmeldungen vermischen.
  */
 export function anonClient(): SupabaseClient {
   return createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
-    auth: { persistSession: false, autoRefreshToken: false, flowType: "implicit" },
+    auth: { persistSession: false, autoRefreshToken: false },
   });
 }
 

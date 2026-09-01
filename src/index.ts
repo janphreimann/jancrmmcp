@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
-import { oauthProvider, magicCallbackPage, handleMagicComplete } from "./oauth.js";
+import { oauthProvider, handleDevicePoll } from "./oauth.js";
 import { buildContext } from "./context.js";
 import { registerAllTools } from "./tools/index.js";
 import { ISSUER_URL } from "./issuer.js";
@@ -21,19 +21,9 @@ app.get("/health", (_req, res) => {
 // OAuth endpoints — router created ONCE at startup to satisfy express-rate-limit constraints
 app.use(mcpAuthRouter({ provider: oauthProvider, issuerUrl: ISSUER_URL }));
 
-// Magic-Link-Rückkehr: die E-Mail-App/der Browser landet hier, nachdem der
-// Nutzer auf den Supabase-Magic-Link geklickt hat. Supabase hängt die Session
-// als URL-Fragment an (#access_token=...), das der Server nicht lesen kann —
-// deshalb eine dünne HTML-Seite mit Inline-Skript, die das Fragment ausliest
-// und nach einer Bestätigung an /auth/magic-complete weiterreicht. Der
-// `p`-Parameter geht an die Seite, weil sie Client und Ziel-Host anzeigt —
-// serverseitig gerendert, damit die Bestätigung etwas wert ist. Siehe oauth.ts.
-app.get("/auth/magic-callback", (req, res) => {
-  const p = typeof req.query.p === "string" ? req.query.p : "";
-  res.type("html").set("Cache-Control", "no-store").send(magicCallbackPage(p));
-});
-
-app.post("/auth/magic-complete", handleMagicComplete);
+// Wird von der Pairing-Seite aus oauthProvider.authorize() gepollt, bis der
+// dort angezeigte Code in der CRM-Web-App eingelöst wurde. Siehe oauth.ts.
+app.post("/auth/device-poll", handleDevicePoll);
 
 // MCP endpoint — protected by OAuth Bearer token
 app.all(
