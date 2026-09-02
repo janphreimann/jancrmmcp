@@ -4,7 +4,7 @@ import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprot
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import { InvalidClientMetadataError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+import { InvalidClientMetadataError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { anonClient, userClient } from "./supabase.js";
 import { ISSUER_URL } from "./issuer.js";
 
@@ -406,8 +406,8 @@ export const oauthProvider: OAuthServerProvider = {
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     const parsed = open<AccessPayload>(token);
-    if (!parsed || parsed.t !== "token") throw new Error("Invalid access token");
-    if (Math.floor(Date.now() / 1000) > parsed.exp) throw new Error("Access token expired");
+    if (!parsed || parsed.t !== "token") throw new InvalidTokenError("Invalid access token");
+    if (Math.floor(Date.now() / 1000) > parsed.exp) throw new InvalidTokenError("Access token expired");
     return {
       token,
       clientId: parsed.c,
