@@ -25,12 +25,25 @@ export async function updateAudioRecordingTranscript(ctx: Ctx, args: z.infer<typ
   if (fetchErr) throw new Error(fetchErr.message);
   if (!existing) throw new Error(`Audio recording ${args.id} not found`);
 
-  const existingCount = Array.isArray(existing.segments) ? existing.segments.length : null;
+  const existingSegments = Array.isArray(existing.segments) ? existing.segments : null;
+  const existingCount = existingSegments ? existingSegments.length : null;
   if (existingCount !== null && existingCount !== args.segments.length) {
     throw new Error(
       `Segment count mismatch: recording has ${existingCount} segments, got ${args.segments.length}. ` +
         "Cleanup must not add, remove, or merge segments — only edit each segment's text."
     );
+  }
+
+  if (existingSegments) {
+    for (let i = 0; i < args.segments.length; i++) {
+      const existingSpeaker = (existingSegments[i] as any)?.speaker;
+      if (existingSpeaker !== undefined && existingSpeaker !== args.segments[i].speaker) {
+        throw new Error(
+          `Speaker index mismatch at segment ${i}: expected speaker ${existingSpeaker}, got ${args.segments[i].speaker}. ` +
+            "Cleanup must not reorder or renumber segments — only edit each segment's text."
+        );
+      }
+    }
   }
 
   const transcript = args.segments.map((s) => `Sprecher ${s.speaker + 1}: ${s.text}`).join("\n\n").trim();
