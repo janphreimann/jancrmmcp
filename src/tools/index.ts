@@ -19,6 +19,13 @@ import {
   updateProjectSchema, updateProject,
 } from "./projects.js";
 import {
+  searchInitiativesSchema, searchInitiatives,
+  getInitiativeSchema, getInitiative,
+  createInitiativeSchema, createInitiative,
+  updateInitiativeSchema, updateInitiative,
+  suggestNextStepSchema, suggestNextStep,
+} from "./initiatives.js";
+import {
   createTaskSchema, createTask,
   searchTasksSchema, searchTasks,
   getTaskSchema, getTask,
@@ -43,6 +50,7 @@ import {
   updateDocumentSchema, updateDocument,
   deleteDocumentSchema, deleteDocument,
 } from "./documents.js";
+import { updateAudioRecordingTranscriptSchema, updateAudioRecordingTranscript } from "./audioRecordings.js";
 
 function ok(result: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
@@ -120,7 +128,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "get_project",
-    "Get full project details by UUID, including linked contacts, companies and tags",
+    "Get full project details by UUID, including linked contacts, companies and tags. The response includes `description` (short human-owned summary), `brief` (the project's manually-maintained orientation note), `ai_summary`/`ai_summary_updated_at` (the Project Curator's periodic status write-up), plus a live-assembled context: `initiative` (if linked), `recent_activity` (journal), `open_tasks`, `recent_documents`, and `open_next_steps` (unconfirmed suggestions — check this before calling suggest_next_step so you don't repeat one). Read description, brief, ai_summary and open_next_steps first before acting on the project.",
     getProjectSchema.shape,
     async (args) => ok(await getProject(ctx, args as Parameters<typeof getProject>[1]))
   );
@@ -134,9 +142,44 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "update_project",
-    "Update a project — stage, description, volumes, dates",
+    "Update a project — stage, description, volumes, dates, and `brief`, its living orientation note. Keep the brief current with anything durable you learn while working on the project; every change is logged to the project's journal automatically. `ai_summary` is reserved for the Project Curator agent's periodic status refresh — other agents should write learnings to `brief` instead.",
     updateProjectSchema.shape,
     async (args) => ok(await updateProject(ctx, args as Parameters<typeof updateProject>[1]))
+  );
+
+  server.tool(
+    "search_initiatives",
+    "Search initiatives — the layer above projects grouping several workstreams toward one shared goal — by name or status",
+    searchInitiativesSchema.shape,
+    async (args) => ok(await searchInitiatives(ctx, args as Parameters<typeof searchInitiatives>[1]))
+  );
+
+  server.tool(
+    "get_initiative",
+    "Get an initiative's description, status, and the projects linked to it",
+    getInitiativeSchema.shape,
+    async (args) => ok(await getInitiative(ctx, args as Parameters<typeof getInitiative>[1]))
+  );
+
+  server.tool(
+    "create_initiative",
+    "Create a new initiative to group related projects toward a shared goal",
+    createInitiativeSchema.shape,
+    async (args) => ok(await createInitiative(ctx, args as Parameters<typeof createInitiative>[1]))
+  );
+
+  server.tool(
+    "update_initiative",
+    "Update an initiative's name, description, status, or target date",
+    updateInitiativeSchema.shape,
+    async (args) => ok(await updateInitiative(ctx, args as Parameters<typeof updateInitiative>[1]))
+  );
+
+  server.tool(
+    "suggest_next_step",
+    "Drop a structured, unconfirmed next-step suggestion on a project for the user to review — check get_project's `open_next_steps` first so you don't repeat one already decided. Use this instead of only writing prose into the brief or journal when you have a concrete, actionable next step.",
+    suggestNextStepSchema.shape,
+    async (args) => ok(await suggestNextStep(ctx, args as Parameters<typeof suggestNextStep>[1]))
   );
 
   server.tool(
@@ -258,6 +301,13 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Overwrite the text content of an existing document in-place",
     updateDocumentContentSchema.shape,
     async (args) => ok(await updateDocumentContent(ctx, args as Parameters<typeof updateDocumentContent>[1]))
+  );
+
+  server.tool(
+    "update_audio_recording_transcript",
+    "Overwrite an audio recording's cleaned transcript segments (used by the Transcript Cleanup agent only — never call this to change what was actually said, only to remove filler words/disfluencies)",
+    updateAudioRecordingTranscriptSchema.shape,
+    async (args) => ok(await updateAudioRecordingTranscript(ctx, args as Parameters<typeof updateAudioRecordingTranscript>[1]))
   );
 
   server.tool(
