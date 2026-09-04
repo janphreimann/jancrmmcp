@@ -75,20 +75,57 @@ export async function getProject(ctx: Ctx, args: z.infer<typeof getProjectSchema
   if (error) throw new Error(error.message);
   if (!data) return null;
 
-  const [contactLinks, companyLinks, tagRows] = await Promise.all([
-    ctx.db
-      .from("project_contacts")
-      .select("contact_id, contacts:contact_id(id, first_name, last_name, email_1)")
-      .eq("project_id", args.id),
-    ctx.db
-      .from("project_companies")
-      .select("company_id, companies:company_id(id, name)")
-      .eq("project_id", args.id),
-    ctx.db
-      .from("project_tags")
-      .select("tag_id, tags:tag_id(id, name, color)")
-      .eq("project_id", args.id),
-  ]);
+  // context: everything an agent needs to orient beyond the static row and
+  // the manually-written brief — assembled fresh on every call, same shape
+  // the webapp's ProjectContextBlock shows a human (see
+  // ../janreimanncrm/src/modules/projects/contextApi.ts). Kept to one
+  // get_project round-trip instead of forcing the agent to chain
+  // search_tasks/list_documents/etc. itself.
+  const [contactLinks, companyLinks, tagRows, initiativeRow, journalRows, taskRows, documentRows, nextStepRows] =
+    await Promise.all([
+      ctx.db
+        .from("project_contacts")
+        .select("contact_id, contacts:contact_id(id, first_name, last_name, email_1)")
+        .eq("project_id", args.id),
+      ctx.db
+        .from("project_companies")
+        .select("company_id, companies:company_id(id, name)")
+        .eq("project_id", args.id),
+      ctx.db
+        .from("project_tags")
+        .select("tag_id, tags:tag_id(id, name, color)")
+        .eq("project_id", args.id),
+      data.initiative_id
+        ? ctx.db.from("initiatives").select("id, name, description, status").eq("id", data.initiative_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      ctx.db
+        .from("project_journal")
+        .select("id, entry_type, content, created_at")
+        .eq("project_id", args.id)
+        .order("created_at", { ascending: false })
+        .limit(8),
+      ctx.db
+        .from("tasks")
+        .select("id, title, due_date, priority")
+        .eq("project_id", args.id)
+        .in("status", ["open", "in_progress"])
+        .is("deleted_at", null)
+        .order("due_date", { ascending: true, nullsFirst: false })
+        .limit(10),
+      ctx.db
+        .from("documents")
+        .select("id, file_name, uploaded_at")
+        .eq("project_id", args.id)
+        .is("deleted_at", null)
+        .order("uploaded_at", { ascending: false })
+        .limit(5),
+      ctx.db
+        .from("project_next_steps")
+        .select("id, title, rationale, created_at")
+        .eq("project_id", args.id)
+        .eq("status", "suggested")
+        .order("created_at", { ascending: false }),
+    ]);
 
   return {
     ...data,
@@ -96,6 +133,11 @@ export async function getProject(ctx: Ctx, args: z.infer<typeof getProjectSchema
     contacts: (contactLinks.data ?? []).map((r: { contacts: unknown }) => r.contacts),
     companies: (companyLinks.data ?? []).map((r: { companies: unknown }) => r.companies),
     tags: (tagRows.data ?? []).map((r: { tags: unknown }) => r.tags),
+    initiative: initiativeRow.data ?? null,
+    recent_activity: journalRows.data ?? [],
+    open_tasks: taskRows.data ?? [],
+    recent_documents: documentRows.data ?? [],
+    open_next_steps: nextStepRows.data ?? [],
   };
 }
 
@@ -147,6 +189,12 @@ export const updateProjectSchema = z.object({
   name: z.string().optional(),
   stage: z.enum(PROJECT_STAGES).optional(),
   description: z.string().optional().nullable(),
+  brief: z.string().optional().nullable().describe(
+    "The project's living orientation note (markdown) — its current status, key facts, decisions, open questions, next steps. Keep it current with anything durable you learn; every change is logged to the project's journal automatically."
+  ),
+  ai_summary: z.string().optional().describe(
+    "Short 2-4 sentence agent-maintained status summary shown at the top of the project. Reserved for the Project Curator agent's periodic refresh — other agents should prefer `brief` for anything they learn. Setting this stamps `ai_summary_updated_at` automatically."
+  ),
   target_volume: z.number().optional().nullable(),
   invested_volume: z.number().optional().nullable(),
   start_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
@@ -159,6 +207,7 @@ export async function updateProject(ctx: Ctx, args: z.infer<typeof updateProject
   const { id, stage, ...rest } = args;
   const updates: Record<string, unknown> = { ...rest };
   if (stage) updates.stage = STAGE_TO_DB[stage] ?? stage;
+  if (updates.ai_summary !== undefined) updates.ai_summary_updated_at = new Date().toISOString();
   const { data, error } = await ctx.db
     .from("projects")
     .update(updates)
