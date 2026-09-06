@@ -7,6 +7,7 @@ async function assertOwnOrgAgent(ctx: Ctx, agentId: string): Promise<void> {
     .select("id")
     .eq("id", agentId)
     .eq("organization_id", ctx.orgId)
+    .eq("is_system", false)
     .maybeSingle();
   if (error || !data) throw new Error(`Agent ${agentId} not found in your organization.`);
 }
@@ -67,12 +68,14 @@ export async function updateRoutine(ctx: Ctx, args: z.infer<typeof updateRoutine
   const { routine_id, agent_id, ...rest } = args;
   const fields = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
   if (Object.keys(fields).length === 0) throw new Error("Nothing to update.");
-  const { error } = await ctx.db
+  const { data, error } = await ctx.db
     .from("agent_triggers")
     .update(fields)
     .eq("id", routine_id)
-    .eq("agent_id", agent_id);
+    .eq("agent_id", agent_id)
+    .select("id");
   if (error) throw new Error(`Could not update routine: ${error.message}`);
+  if (!data?.length) throw new Error(`Routine ${routine_id} not found on this agent.`);
   return { success: true };
 }
 
@@ -83,11 +86,13 @@ export const cancelRoutineSchema = z.object({
 
 export async function cancelRoutine(ctx: Ctx, args: z.infer<typeof cancelRoutineSchema>) {
   await assertOwnOrgAgent(ctx, args.agent_id);
-  const { error } = await ctx.db
+  const { data, error } = await ctx.db
     .from("agent_triggers")
     .delete()
     .eq("id", args.routine_id)
-    .eq("agent_id", args.agent_id);
+    .eq("agent_id", args.agent_id)
+    .select("id");
   if (error) throw new Error(`Could not cancel routine: ${error.message}`);
+  if (!data?.length) throw new Error(`Routine ${args.routine_id} not found on this agent.`);
   return { success: true };
 }
