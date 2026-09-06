@@ -49,6 +49,11 @@ import {
 } from "./documents.js";
 import { updateAudioRecordingTranscriptSchema, updateAudioRecordingTranscript } from "./audioRecordings.js";
 import { updateAgentProfileSchema, updateAgentProfile, rememberSchema, remember } from "./selfManagement.js";
+import {
+  scheduleRoutineSchema, scheduleRoutine,
+  updateRoutineSchema, updateRoutine,
+  cancelRoutineSchema, cancelRoutine,
+} from "./routines.js";
 
 function ok(result: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
@@ -315,5 +320,28 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Overwrite your own memory document — the durable summary of your job and what you know, re-read on every message.",
     rememberSchema.shape,
     async (args) => ok(await remember(ctx, args as Parameters<typeof remember>[1]))
+  );
+
+  // ─── Routines ────────────────────────────────────────────────────────────
+
+  server.tool(
+    "schedule_routine",
+    "Set up a recurring task for yourself — either every N minutes or at a fixed daily time. Fires even when nobody is chatting with you.",
+    scheduleRoutineSchema.shape,
+    async (args) => ok(await scheduleRoutine(ctx, args as Parameters<typeof scheduleRoutine>[1]))
+  );
+
+  server.tool(
+    "update_routine",
+    "Change or pause (enabled: false) one of your existing routines.",
+    updateRoutineSchema.shape,
+    async (args) => ok(await updateRoutine(ctx, args as Parameters<typeof updateRoutine>[1]))
+  );
+
+  server.tool(
+    "cancel_routine",
+    "Permanently delete one of your own routines.",
+    cancelRoutineSchema.shape,
+    async (args) => ok(await cancelRoutine(ctx, args as Parameters<typeof cancelRoutine>[1]))
   );
 }
