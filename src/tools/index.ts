@@ -48,6 +48,7 @@ import {
   deleteDocumentSchema, deleteDocument,
 } from "./documents.js";
 import { updateAudioRecordingTranscriptSchema, updateAudioRecordingTranscript } from "./audioRecordings.js";
+import { updateAgentProfileSchema, updateAgentProfile, rememberSchema, remember } from "./selfManagement.js";
 
 function ok(result: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
@@ -298,5 +299,21 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Soft-delete a document (moves it to trash, recoverable from the CRM UI)",
     deleteDocumentSchema.shape,
     async (args) => ok(await deleteDocument(ctx, args as Parameters<typeof deleteDocument>[1]))
+  );
+
+  // ─── Self-management ─────────────────────────────────────────────────────
+
+  server.tool(
+    "update_agent_profile",
+    "Rename yourself, change your color, or set your one-line description — do this once you understand what the user wants you to be.",
+    updateAgentProfileSchema.shape,
+    async (args) => ok(await updateAgentProfile(ctx, args as Parameters<typeof updateAgentProfile>[1]))
+  );
+
+  server.tool(
+    "remember",
+    "Overwrite your own memory document — the durable summary of your job and what you know, re-read on every message.",
+    rememberSchema.shape,
+    async (args) => ok(await remember(ctx, args as Parameters<typeof remember>[1]))
   );
 }
