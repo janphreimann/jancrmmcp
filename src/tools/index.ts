@@ -25,7 +25,11 @@ import {
   updateTaskSchema, updateTask,
 } from "./tasks.js";
 import { createCalendarEventSchema, createCalendarEvent } from "./calendar.js";
-import { createEmailDraftSchema, createEmailDraft } from "./mail.js";
+import {
+  createEmailDraftSchema, createEmailDraft,
+  listEmailsSchema, listEmails,
+  getEmailSchema, getEmail,
+} from "./mail.js";
 import {
   listTagsSchema, listTags,
   addTagToEntitySchema, addTagToEntity,
@@ -180,6 +184,20 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Save an email draft to the Drafts folder via IMAP. To, CC, subject and body are all optional — useful for pre-filling a draft the user will finish later.",
     createEmailDraftSchema.shape,
     async (args) => ok(await createEmailDraft(ctx, args as Parameters<typeof createEmailDraft>[1]))
+  );
+
+  server.tool(
+    "list_emails",
+    "List/search recent emails from the user's mailbox — compact results (subject, sender, preview, read status), not full bodies. Use get_email to fetch a full message.",
+    listEmailsSchema.shape,
+    async (args) => ok(await listEmails(ctx, args as Parameters<typeof listEmails>[1]))
+  );
+
+  server.tool(
+    "get_email",
+    "Get one email's full content by UUID: body, all recipients, and attachment list",
+    getEmailSchema.shape,
+    async (args) => ok(await getEmail(ctx, args as Parameters<typeof getEmail>[1]))
   );
 
   server.tool(
