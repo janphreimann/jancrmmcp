@@ -273,7 +273,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "upload_binary_document",
-    "Upload a binary file (PDF, PPTX, XLSX, image, etc.) to the CRM as a Base64-encoded payload. Optionally place it in a folder and link it to a CRM entity. Returns the document ID and a signed download URL.",
+    "Upload a binary file (PDF, PPTX, XLSX, image, etc.) to the CRM as a Base64-encoded payload. Optionally place it in a folder and link it to a CRM entity. Returns the document ID.",
     uploadBinaryDocumentSchema.shape,
     async (args) => ok(await uploadBinaryDocument(ctx, args as Parameters<typeof uploadBinaryDocument>[1]))
   );

@@ -283,16 +283,10 @@ export async function uploadBinaryDocument(ctx: Ctx, args: z.infer<typeof upload
   const { data, error } = await ctx.db.from("documents").insert(insert).select("id").single();
   if (error) throw new Error(error.message);
 
-  const { data: urlData, error: urlErr } = await ctx.db.storage
-    .from("documents")
-    .createSignedUrl(storagePath, 3600);
-  if (urlErr) throw new Error(urlErr.message);
-
   return {
     id: data.id,
     file_name,
     file_size: buffer.byteLength,
-    signed_url: urlData.signedUrl,
     message: `Binary document "${file_name}" uploaded successfully`,
   };
 }
