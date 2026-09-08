@@ -47,7 +47,11 @@ import {
   updateDocumentSchema, updateDocument,
   deleteDocumentSchema, deleteDocument,
 } from "./documents.js";
-import { updateAudioRecordingTranscriptSchema, updateAudioRecordingTranscript } from "./audioRecordings.js";
+import {
+  updateAudioRecordingTranscriptSchema, updateAudioRecordingTranscript,
+  searchAudioRecordingsSchema, searchAudioRecordings,
+  getAudioRecordingSchema, getAudioRecording,
+} from "./audioRecordings.js";
 import { updateAgentProfileSchema, updateAgentProfile, rememberSchema, remember } from "./selfManagement.js";
 import {
   scheduleRoutineSchema, scheduleRoutine,
@@ -290,6 +294,20 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Overwrite an audio recording's cleaned transcript segments (used by the Transcript Cleanup agent only — never call this to change what was actually said, only to remove filler words/disfluencies)",
     updateAudioRecordingTranscriptSchema.shape,
     async (args) => ok(await updateAudioRecordingTranscript(ctx, args as Parameters<typeof updateAudioRecordingTranscript>[1]))
+  );
+
+  server.tool(
+    "search_audio_recordings",
+    "Search call/meeting recording sessions by linked contact, linked company, or a text substring in the title/transcript/summary. Returns transcript summaries and a short transcript snippet per session — never the audio file itself. Use get_audio_recording on a result's recording_group_id for the full transcript.",
+    searchAudioRecordingsSchema.shape,
+    async (args) => ok(await searchAudioRecordings(ctx, args as Parameters<typeof searchAudioRecordings>[1]))
+  );
+
+  server.tool(
+    "get_audio_recording",
+    "Get the full transcript and summary of one call/meeting recording session (segments with resolved speaker names, linked contacts/companies). Never returns the audio file itself.",
+    getAudioRecordingSchema.shape,
+    async (args) => ok(await getAudioRecording(ctx, args as Parameters<typeof getAudioRecording>[1]))
   );
 
   server.tool(
