@@ -5,7 +5,7 @@ import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/serv
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { InvalidClientMetadataError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
-import { anonClient, userClient } from "./supabase.js";
+import { admin, anonClient } from "./supabase.js";
 import { ISSUER_URL } from "./issuer.js";
 
 // ─── Token-Format ────────────────────────────────────────────────────────────
@@ -448,7 +448,7 @@ export async function handleDevicePoll(req: Request, res: Response): Promise<voi
 
   // status === "claimed": die Zeile ist mit dem Lesen bereits gelöscht
   // (Einmalverwendung, siehe Migration) — ab hier kein zweiter Versuch mehr.
-  if (!row.access_token || !row.refresh_token || !row.redirect_uri || !row.code_challenge || !row.client_id) {
+  if (!row.user_id || !row.redirect_uri || !row.code_challenge || !row.client_id) {
     res.json({ status: "expired" });
     return;
   }
@@ -461,16 +461,47 @@ export async function handleDevicePoll(req: Request, res: Response): Promise<voi
     return;
   }
 
-  // Bestätigt, dass der Access-Token echt und aktuell ist — Supabase prüft
-  // Signatur und Ablauf serverseitig, statt dass wir der Datenbankzeile blind
-  // glauben.
-  const { data: userData, error: userError } = await userClient(row.access_token).auth.getUser();
-  if (userError || !userData.user) {
+  // Die Grant-Zeile trägt nur noch, WER geklickt hat (user_id, aus auth.uid()
+  // der Web-App-Sitzung — nie aus einem Parameter), keine Session-Tokens
+  // mehr. Würden wir stattdessen die Tokens der klickenden Browser-Session
+  // übernehmen, säßen Browser-Tab und MCP-Server ab hier auf demselben
+  // Refresh-Token: Supabase rotiert ihn bei jeder Nutzung und invalidiert die
+  // alte Fassung sofort, und der Browser-Tab refresht im Hintergrund fast
+  // immer zuerst — der MCP-Server träfe bei seinem eigenen, bis zu eine
+  // Stunde späteren ersten Refresh auf einen bereits verbrauchten Token und
+  // müsste die Sitzung für tot erklären. generateLink + sofortiges
+  // serverseitiges verifyOtp erzeugt stattdessen eine zweite, unabhängige
+  // Session für denselben, bereits bestätigten Nutzer — ohne Mail-Versand,
+  // ohne geteiltes Token.
+  const { data: targetUser, error: targetUserError } = await admin.auth.admin.getUserById(row.user_id);
+  if (targetUserError || !targetUser.user?.email) {
     res.status(401).json({ status: "expired", error: "Sitzung ist ungültig. Bitte fordere einen neuen Code an." });
     return;
   }
 
-  const session: Session = { sub: userData.user.id, at: row.access_token, rt: row.refresh_token };
+  const { data: link, error: linkError } = await admin.auth.admin.generateLink({
+    type: "magiclink",
+    email: targetUser.user.email,
+  });
+  if (linkError || !link?.properties?.hashed_token) {
+    res.status(502).json({ status: "expired", error: "Verbindung konnte nicht abgeschlossen werden. Bitte fordere einen neuen Code an." });
+    return;
+  }
+
+  const { data: verified, error: verifyError } = await anonClient().auth.verifyOtp({
+    token_hash: link.properties.hashed_token,
+    type: "magiclink",
+  });
+  if (verifyError || !verified.session) {
+    res.status(401).json({ status: "expired", error: "Sitzung ist ungültig. Bitte fordere einen neuen Code an." });
+    return;
+  }
+
+  const session: Session = {
+    sub: targetUser.user.id,
+    at: verified.session.access_token,
+    rt: verified.session.refresh_token,
+  };
   const code = issueAuthCode(row.client_id, row.code_challenge, row.redirect_uri, session);
   const url = new URL(row.redirect_uri);
   url.searchParams.set("code", code);

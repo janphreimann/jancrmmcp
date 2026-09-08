@@ -14,10 +14,16 @@ export const supabaseAnonKey = SUPABASE_ANON_KEY;
 /**
  * service_role — RLS greift hier *nicht*.
  *
- * Nur für die eine Stelle, an der ein Nutzer-JWT nicht reicht: die
- * entschlüsselten CalDAV-Zugangsdaten aus dem Vault (`get_caldav_accounts`).
- * Jede Abfrage darüber muss selbst auf `ctx.userId` filtern — sonst greift sie
- * auf die Postfächer und Kalender *aller* Organisationen zu.
+ * Zwei begründete Verwendungen, beide dort dokumentiert:
+ * - `ctx.admin` in Tools, für die entschlüsselten CalDAV-Zugangsdaten aus dem
+ *   Vault (`get_caldav_accounts`, siehe context.ts). Jede Abfrage darüber muss
+ *   selbst auf `ctx.userId` filtern — sonst greift sie auf die Postfächer und
+ *   Kalender *aller* Organisationen zu.
+ * - `handleDevicePoll` in oauth.ts, um beim MCP-Device-Grant-Claim per
+ *   `generateLink` + `verifyOtp` eine vom Browser-Tab unabhängige zweite
+ *   Session für den bereits identifizierten Nutzer zu erzeugen (kein Mail-
+ *   Versand, keine wählbare Identität — `email` kommt aus `getUserById(user_id)`
+ *   einer Zeile, deren `user_id` selbst nur aus `auth.uid()` gesetzt wurde).
  */
 export const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
