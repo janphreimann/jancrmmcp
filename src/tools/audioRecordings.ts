@@ -3,6 +3,7 @@ import type { Ctx } from "../context.js";
 import {
   groupSessionsByRecordingGroup,
   transcriptSnippet,
+  resolveSegmentSpeakers,
   type AudioRecordingRow,
 } from "./audioRecordingHelpers.js";
 
@@ -187,4 +188,36 @@ export async function searchAudioRecordings(ctx: Ctx, args: z.infer<typeof searc
     contacts: contactsByGroup.get(s.recording_group_id) ?? [],
     companies: companiesByGroup.get(s.recording_group_id) ?? [],
   }));
+}
+
+export const getAudioRecordingSchema = z.object({
+  recording_group_id: z.string().uuid().describe(
+    "recording_group_id of the session (from search_audio_recordings)"
+  ),
+});
+
+export async function getAudioRecording(ctx: Ctx, args: z.infer<typeof getAudioRecordingSchema>) {
+  const { data, error } = await ctx.db
+    .from("audio_recordings")
+    .select(AUDIO_RECORDING_COLUMNS)
+    .eq("recording_group_id", args.recording_group_id)
+    .eq("user_id", ctx.userId);
+  if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error(`Audio recording session ${args.recording_group_id} not found`);
+
+  const [session] = groupSessionsByRecordingGroup(data as AudioRecordingRow[]);
+  const { contactsByGroup, companiesByGroup } = await attachContactsAndCompanies(ctx, [session.recording_group_id]);
+
+  return {
+    recording_group_id: session.recording_group_id,
+    title: session.title,
+    created_at: session.created_at,
+    duration_seconds: session.duration_seconds,
+    transcription_status: session.transcription_status,
+    transcript: session.transcript,
+    summary: session.summary,
+    segments: resolveSegmentSpeakers(session.segments, session.speaker_labels),
+    contacts: contactsByGroup.get(session.recording_group_id) ?? [],
+    companies: companiesByGroup.get(session.recording_group_id) ?? [],
+  };
 }
