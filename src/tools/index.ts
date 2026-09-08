@@ -256,7 +256,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "list_documents",
-    "List documents with optional folder filter and text search. Omit folder_id to get all, pass null to get root-level only.",
+    "List documents with optional filters (folder, doc_type, linked contact/company/project) and text search. Omit folder_id to get all, pass null to get root-level only. Use doc_type: 'transcript' to find project meeting transcripts and their auto-generated summaries.",
     listDocumentsSchema.shape,
     async (args) => ok(await listDocuments(ctx, args as Parameters<typeof listDocuments>[1]))
   );

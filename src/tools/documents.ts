@@ -56,13 +56,19 @@ export const listDocumentsSchema = z.object({
     "Filter by folder UUID. Pass null to list only root-level documents (no folder). Omit entirely to list all documents."
   ),
   query: z.string().optional().describe("Search in file name or description"),
+  doc_type: z.string().optional().describe(
+    "Filter by document type, e.g. 'transcript' for project meeting transcripts or 'agent_index' for internal agent indexes"
+  ),
+  contact_id: z.string().uuid().optional().describe("Filter to documents linked to this contact"),
+  company_id: z.string().uuid().optional().describe("Filter to documents linked to this company"),
+  project_id: z.string().uuid().optional().describe("Filter to documents linked to this project"),
   limit: z.number().int().min(1).max(100).default(50),
 });
 
 export async function listDocuments(ctx: Ctx, args: z.infer<typeof listDocumentsSchema>) {
   let q = ctx.db
     .from("documents")
-    .select("id, file_name, file_size, description, folder_id, uploaded_at, contact_id, company_id, project_id")
+    .select("id, file_name, file_size, description, folder_id, uploaded_at, contact_id, company_id, project_id, doc_type")
     .is("deleted_at", null)
     .order("uploaded_at", { ascending: false })
     .limit(args.limit);
@@ -77,6 +83,10 @@ export async function listDocuments(ctx: Ctx, args: z.infer<typeof listDocuments
   if (args.query) {
     q = q.or(`file_name.ilike.%${args.query}%,description.ilike.%${args.query}%`);
   }
+  if (args.doc_type) q = q.eq("doc_type", args.doc_type);
+  if (args.contact_id) q = q.eq("contact_id", args.contact_id);
+  if (args.company_id) q = q.eq("company_id", args.company_id);
+  if (args.project_id) q = q.eq("project_id", args.project_id);
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
