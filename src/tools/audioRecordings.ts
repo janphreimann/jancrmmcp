@@ -7,11 +7,27 @@ import {
   type AudioRecordingRow,
 } from "./audioRecordingHelpers.js";
 
-const AUDIO_RECORDING_COLUMNS =
+// search_audio_recordings never reads segments/speaker_labels (it only returns
+// a transcript_snippet), so it selects a smaller column list to avoid pulling
+// full per-segment jsonb for every matching row.
+const AUDIO_RECORDING_SEARCH_COLUMNS =
+  "id, recording_group_id, source, title, duration_seconds, transcript, transcription_status, summary, created_at";
+
+// get_audio_recording resolves speaker names from segments/speaker_labels, so
+// it needs the full column list.
+const AUDIO_RECORDING_DETAIL_COLUMNS =
   "id, recording_group_id, source, title, duration_seconds, transcript, transcription_status, segments, speaker_labels, summary, created_at";
 
 function endOfDayIfDateOnly(value: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T23:59:59.999` : value;
+}
+
+// Escapes characters meaningful to PostgREST's filter-string syntax ("
+// closes a quoted pattern, \ is its escape char) before interpolating
+// user-supplied text into an ilike pattern. The % and _ LIKE wildcards are
+// intentionally left untouched.
+function escapeIlikePattern(value: string): string {
+  return value.replace(/["\\]/g, "\\$&");
 }
 
 async function resolveAllowedGroupIds(
@@ -159,16 +175,24 @@ export async function searchAudioRecordings(ctx: Ctx, args: z.infer<typeof searc
 
   let q = ctx.db
     .from("audio_recordings")
-    .select(AUDIO_RECORDING_COLUMNS)
+    .select(AUDIO_RECORDING_SEARCH_COLUMNS)
     .eq("user_id", ctx.userId)
     .order("created_at", { ascending: false });
 
   if (allowedGroupIds) q = q.in("recording_group_id", Array.from(allowedGroupIds));
   if (args.query) {
-    q = q.or(`title.ilike.%${args.query}%,transcript.ilike.%${args.query}%,summary.ilike.%${args.query}%`);
+    const pattern = escapeIlikePattern(args.query);
+    q = q.or(`title.ilike."%${pattern}%",transcript.ilike."%${pattern}%",summary.ilike."%${pattern}%"`);
   }
   if (args.since) q = q.gte("created_at", args.since);
   if (args.until) q = q.lte("created_at", endOfDayIfDateOnly(args.until));
+
+  // Safety cap on the raw row fetch, applied before grouping — distinct from
+  // the post-grouping args.limit slice below. A session can span up to ~3
+  // raw rows/tracks (mic, system_audio, combined), so limit * 5 comfortably
+  // covers grouping without meaningfully changing behavior for realistic
+  // limit values; it's a valve against unbounded pulls, not a user-facing cap.
+  q = q.limit(Math.min(args.limit * 5, 500));
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
@@ -199,9 +223,10 @@ export const getAudioRecordingSchema = z.object({
 export async function getAudioRecording(ctx: Ctx, args: z.infer<typeof getAudioRecordingSchema>) {
   const { data, error } = await ctx.db
     .from("audio_recordings")
-    .select(AUDIO_RECORDING_COLUMNS)
+    .select(AUDIO_RECORDING_DETAIL_COLUMNS)
     .eq("recording_group_id", args.recording_group_id)
-    .eq("user_id", ctx.userId);
+    .eq("user_id", ctx.userId)
+    .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   if (!data?.length) throw new Error(`Audio recording session ${args.recording_group_id} not found`);
 

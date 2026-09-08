@@ -74,6 +74,7 @@ export function groupSessionsByRecordingGroup(rows: AudioRecordingRow[]): AudioR
 export function transcriptSnippet(transcript: string | null, maxLen = 300): string | null {
   if (!transcript) return null;
   const trimmed = transcript.trim();
+  if (!trimmed) return null;
   if (trimmed.length <= maxLen) return trimmed;
   return trimmed.slice(0, maxLen).trimEnd() + "…";
 }

@@ -77,6 +77,10 @@ test("returns null for null transcript", () => {
   assert(transcriptSnippet(null) === null, "Expected null");
 });
 
+test("returns null for a whitespace-only transcript", () => {
+  assert(transcriptSnippet("   \n  ") === null, "Expected null");
+});
+
 test("returns the full transcript when under the limit", () => {
   assert(transcriptSnippet("short text", 300) === "short text", "Expected unchanged text");
 });
