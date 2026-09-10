@@ -20,12 +20,13 @@ async function assertOwnOrgAgent(ctx: Ctx, agentId: string): Promise<void> {
 // this tool.
 export const scheduleRoutineSchema = z.object({
   agent_id: z.string().uuid().describe("Your own agent id, from your system prompt"),
+  name: z.string().min(1).describe("A short, descriptive name for this routine, chosen by you (e.g. \"Daily inbox screen\") — shown in the UI, never left blank"),
   interval_minutes: z.number().int().positive().optional().describe("Fire every N minutes"),
   schedule_hour: z.number().int().min(0).max(23).optional().describe("Fire daily at this hour (local time)"),
   schedule_minute: z.number().int().min(0).max(59).optional().describe("Minute of the hour, default 0"),
   schedule_weekday: z.number().int().min(0).max(6).optional().describe("0=Sunday..6=Saturday, omit for every day"),
-  prompt_template: z.string().min(1).describe("The instruction you'll give yourself when this fires — write it as if the user just sent it to you"),
-  max_runs_per_day: z.number().int().positive().max(288).optional().describe("Safety cap, default 20"),
+  prompt_template: z.string().min(1).describe("The exact message you will receive as if the user just sent it, when this fires — the literal instruction you'll act on, not a description of the routine"),
+  max_runs_per_day: z.number().int().positive().nullable().optional().describe("Optional safety cap on runs/day. Omit or pass null for unlimited (the default)."),
 });
 
 export async function scheduleRoutine(ctx: Ctx, args: z.infer<typeof scheduleRoutineSchema>) {
@@ -39,12 +40,13 @@ export async function scheduleRoutine(ctx: Ctx, args: z.infer<typeof scheduleRou
       agent_id: args.agent_id,
       created_by: ctx.userId,
       kind: "schedule",
+      name: args.name,
       interval_minutes: args.interval_minutes ?? null,
       schedule_hour: args.schedule_hour ?? null,
       schedule_minute: args.schedule_minute ?? 0,
       schedule_weekday: args.schedule_weekday ?? null,
       prompt_template: args.prompt_template,
-      max_runs_per_day: args.max_runs_per_day ?? 20,
+      max_runs_per_day: args.max_runs_per_day ?? null,
     })
     .select("id")
     .single();
@@ -55,12 +57,14 @@ export async function scheduleRoutine(ctx: Ctx, args: z.infer<typeof scheduleRou
 export const updateRoutineSchema = z.object({
   agent_id: z.string().uuid().describe("Your own agent id"),
   routine_id: z.string().uuid(),
+  name: z.string().min(1).optional().describe("Rename the routine"),
   interval_minutes: z.number().int().positive().nullable().optional(),
   schedule_hour: z.number().int().min(0).max(23).nullable().optional(),
   schedule_minute: z.number().int().min(0).max(59).nullable().optional(),
   schedule_weekday: z.number().int().min(0).max(6).nullable().optional(),
   prompt_template: z.string().min(1).optional(),
   enabled: z.boolean().optional().describe("Set false to pause without deleting"),
+  max_runs_per_day: z.number().int().positive().nullable().optional().describe("Optional safety cap on runs/day. Pass null to remove the cap (unlimited)."),
 });
 
 export async function updateRoutine(ctx: Ctx, args: z.infer<typeof updateRoutineSchema>) {

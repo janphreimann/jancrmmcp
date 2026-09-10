@@ -150,7 +150,7 @@ export async function updateAudioRecordingTranscript(ctx: Ctx, args: z.infer<typ
 
   const { data, error } = await ctx.db
     .from("audio_recordings")
-    .update({ segments: args.segments, transcript })
+    .update({ segments: args.segments, transcript, transcript_cleaned_at: new Date().toISOString() })
     .eq("id", args.id)
     .eq("user_id", ctx.userId)
     .select("id");
