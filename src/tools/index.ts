@@ -53,6 +53,7 @@ import {
   getAudioRecordingSchema, getAudioRecording,
 } from "./audioRecordings.js";
 import { updateAgentProfileSchema, updateAgentProfile, rememberSchema, remember } from "./selfManagement.js";
+import { readChatHistorySchema, readChatHistory } from "./chatHistory.js";
 import {
   scheduleRoutineSchema, scheduleRoutine,
   updateRoutineSchema, updateRoutine,
@@ -338,6 +339,13 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Overwrite your own memory document — the durable summary of your job and what you know, re-read on every message.",
     rememberSchema.shape,
     async (args) => ok(await remember(ctx, args as Parameters<typeof remember>[1]))
+  );
+
+  server.tool(
+    "read_chat_history",
+    "Page back through or search your own chat thread beyond the recent messages in your context window. Use it whenever something refers to earlier conversation you can't see, instead of guessing.",
+    readChatHistorySchema.shape,
+    async (args) => ok(await readChatHistory(ctx, args as Parameters<typeof readChatHistory>[1]))
   );
 
   // ─── Routines ────────────────────────────────────────────────────────────
