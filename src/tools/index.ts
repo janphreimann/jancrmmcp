@@ -66,9 +66,22 @@ import {
   updateRoutineSchema, updateRoutine,
   cancelRoutineSchema, cancelRoutine,
 } from "./routines.js";
+import { openProjectSchema, openProject } from "./openProject.js";
+import {
+  updateAgentStatusSchema, updateAgentStatus,
+  logProjectActivitySchema, logProjectActivity,
+  proposeBriefSchema, proposeBrief,
+  linkProjectItemSchema, linkProjectItem,
+  listProjectTimelineSchema, listProjectTimeline,
+} from "./projectRoom.js";
+import { getInteractionSchema, getInteraction, listInteractionsObject, listInteractions } from "./interactions.js";
 
 function ok(result: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+}
+
+function text(result: string) {
+  return { content: [{ type: "text" as const, text: result }] };
 }
 
 /**
@@ -132,6 +145,64 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Update an existing company",
     updateCompanySchema.shape,
     async (args) => ok(await updateCompany(ctx, args as Parameters<typeof updateCompany>[1]))
+  );
+
+  // ─── Project data room ───────────────────────────────────────────────────
+
+  server.tool(
+    "open_project",
+    "Open a project and get its briefing: current state (your status note and the human's brief, each with a date), everything that happened since you last opened it, what is open, and an index of every document, interaction, recording, event and pinned note with ids you can pass to the drill-down tools. Call this first whenever a request concerns a project. Before you finish working on the project: call update_agent_status if the state changed, and log_project_activity with a one-paragraph summary of what you did — that is how your next visit knows where you left off.",
+    openProjectSchema.shape,
+    async (args) => text(await openProject(ctx, args as Parameters<typeof openProject>[1]))
+  );
+
+  server.tool(
+    "update_agent_status",
+    "Your own status note for a project (3–8 sentences: where it stands, what happened last, what is next or blocking). Replaces the previous one. No headings. Write it at the end of a session in which the state changed.",
+    updateAgentStatusSchema.shape,
+    async (args) => ok(await updateAgentStatus(ctx, args as Parameters<typeof updateAgentStatus>[1]))
+  );
+
+  server.tool(
+    "log_project_activity",
+    "Record what you did in this project session (one paragraph). Shows up in the project timeline and in your next briefing's delta. Call once per session, at the end.",
+    logProjectActivitySchema.shape,
+    async (args) => ok(await logProjectActivity(ctx, args as Parameters<typeof logProjectActivity>[1]))
+  );
+
+  server.tool(
+    "propose_brief",
+    "Propose a new version of the human-owned project brief (full replacement text, markdown). The user sees a diff and applies or rejects it. You cannot edit the brief directly. Only one proposal can be open per project.",
+    proposeBriefSchema.shape,
+    async (args) => ok(await proposeBrief(ctx, args as Parameters<typeof proposeBrief>[1]))
+  );
+
+  server.tool(
+    "link_project_item",
+    "Attach an email, a recording (by recording_group_id) or a calendar event to a project so it becomes part of the project's data room. Only attach things that clearly belong; the user can undo. Shown with an Agent badge until approved.",
+    linkProjectItemSchema.shape,
+    async (args) => ok(await linkProjectItem(ctx, args as Parameters<typeof linkProjectItem>[1]))
+  );
+
+  server.tool(
+    "list_project_timeline",
+    "Page through a project's unified timeline (journal, tasks, interactions, linked mail/recordings/events, documents), newest first. Use `before` from a previous call's next_before to go further back; `kinds` to filter.",
+    listProjectTimelineSchema.shape,
+    async (args) => text(await listProjectTimeline(ctx, args as Parameters<typeof listProjectTimeline>[1]))
+  );
+
+  server.tool(
+    "get_interaction",
+    "Full details of one logged interaction (call, meeting, …): content, next steps, internal notes, contacts, companies, linked tasks and documents",
+    getInteractionSchema.shape,
+    async (args) => ok(await getInteraction(ctx, args as Parameters<typeof getInteraction>[1]))
+  );
+
+  server.tool(
+    "list_interactions",
+    "Compact list of logged interactions for a project, contact or company (at least one filter required), newest first",
+    listInteractionsObject.shape,
+    async (args) => ok(await listInteractions(ctx, args))
   );
 
   server.tool(
