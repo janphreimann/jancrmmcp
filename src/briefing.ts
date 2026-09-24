@@ -157,12 +157,19 @@ export function renderBriefing(b: Briefing, now: Date): string {
   if (b.since) {
     out.push("", `## Since your last visit (${minute(b.since)} → ${minute(now.toISOString())})`);
     if (!b.delta.length) out.push("Nothing new.");
-    for (const r of b.delta.slice(0, DELTA_CAP)) out.push(deltaLine(r));
+    const shown = b.delta.slice(0, DELTA_CAP);
+    for (const r of shown) out.push(deltaLine(r));
     const total = Object.values(b.delta_counts).reduce((a, n) => a + n, 0);
-    if (total > Math.min(b.delta.length, DELTA_CAP)) {
-      const rest = total - Math.min(b.delta.length, DELTA_CAP);
-      const parts = Object.entries(b.delta_counts).map(([k, n]) => `${k}: ${n}`).join(", ");
-      const oldest = b.delta[Math.min(b.delta.length, DELTA_CAP) - 1]?.occurred_at ?? b.since;
+    if (total > shown.length) {
+      const rest = total - shown.length;
+      const shownCounts: Record<string, number> = {};
+      for (const r of shown) shownCounts[r.kind] = (shownCounts[r.kind] ?? 0) + 1;
+      const parts = Object.entries(b.delta_counts)
+        .map(([k, n]) => [k, n - (shownCounts[k] ?? 0)] as const)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => `${k}: ${n}`)
+        .join(", ");
+      const oldest = shown[shown.length - 1]?.occurred_at ?? b.since;
       out.push(`+${rest} more (${parts}) → list_project_timeline(project_id, before="${oldest}")`);
     }
   } else {
@@ -223,10 +230,12 @@ export function renderBriefing(b: Briefing, now: Date): string {
     for (const r of b.index.recordings) {
       out.push(`- ${day(r.created_at)} ${r.title} · ${mmss(r.duration_seconds)} · ${r.has_transcript ? "transcript ✓" : "pending"} [recording:${r.id}]`);
     }
+    if (b.index.recordings_total > b.index.recordings.length) out.push(`+${b.index.recordings_total - b.index.recordings.length} more → list_project_timeline(project_id, kinds=["audio_recording"])`);
   }
   if (b.index.events.length) {
     out.push(`Events (${b.index.events_total}, upcoming first):`);
     for (const e of b.index.events) out.push(`- ${e.all_day ? day(e.start_at) : minute(e.start_at)} ${e.summary} [event:${e.id}]`);
+    if (b.index.events_total > b.index.events.length) out.push(`+${b.index.events_total - b.index.events.length} more → list_project_timeline(project_id, kinds=["calendar_event"])`);
   }
   if (b.index.emails_total) out.push(`Emails linked: ${b.index.emails_total} → list_project_timeline(project_id, kinds=["email"])`);
   out.push(`Journal: ${b.index.journal_total} entries, ${b.index.pinned_journal.length} pinned`);

@@ -36,6 +36,17 @@ const deltaLines = deltaSection.split("\n").filter((l) => l.startsWith("- "));
 check("rich: delta has 30 lines", deltaLines.length === 30, `got ${deltaLines.length}`);
 check("rich: +5 more hint", /\+5 more \(/.test(deltaSection));
 
+// 2b. rich: the parenthesized per-kind remainder in the "+N more" trailer
+// sums to N (remaining counts, not full delta_counts totals).
+const trailerMatch = deltaSection.match(/\+(\d+) more \(([^)]*)\)/);
+check("rich: +N more trailer present", !!trailerMatch);
+if (trailerMatch) {
+  const n = Number(trailerMatch[1]);
+  const parts = trailerMatch[2].split(", ").map((p) => Number(p.split(": ")[1]));
+  const sum = parts.reduce((a, x) => a + x, 0);
+  check("rich: trailer breakdown sums to +N", sum === n, `sum=${sum} n=${n} (${trailerMatch[2]})`);
+}
+
 // 3. rich: every ref points at an id in the fixture
 const ids = new Set<string>();
 const collect = (v: unknown) => {
@@ -67,5 +78,14 @@ check("empty: journal line", empty.includes("Journal: 0 entries, 0 pinned"));
 
 // 7. size
 check("rich: under 12k chars", md.length < 12000, `${md.length}`);
+
+// 8. index caps: recordings and events print "+N more" like documents/interactions
+// do, once their _total exceeds the shown list (§4.2: every capped list prints one).
+const capped: Briefing = JSON.parse(JSON.stringify(rich));
+capped.index.recordings_total = capped.index.recordings.length + 3;
+capped.index.events_total = capped.index.events.length + 2;
+const cappedMd = renderBriefing(capped, NOW);
+check("recordings: +N more hint", cappedMd.includes(`+3 more → list_project_timeline(project_id, kinds=["audio_recording"])`));
+check("events: +N more hint", cappedMd.includes(`+2 more → list_project_timeline(project_id, kinds=["calendar_event"])`));
 
 if (failed) process.exit(1);
