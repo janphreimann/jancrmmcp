@@ -100,11 +100,21 @@ function ext(name: string): string {
   return m ? m[1].toLowerCase() : "file";
 }
 
+// Claude's own session log (log_project_activity). project_timeline already
+// caps it at 1500 chars; clipping it again here would leave Claude unable to
+// read back what it wrote last session — so it is shown in full.
+export function isAgentSession(r: TimelineRow): boolean {
+  return r.kind === "journal" && r.meta["entry_type"] === "agent_session";
+}
+
 function deltaLine(r: TimelineRow): string {
   let label = KIND_LABEL[r.kind];
   if (r.kind === "email") label = r.meta["direction"] === "outbound" ? "Mail out" : "Mail in";
   const who = r.kind === "email" && r.meta["from_name"] ? ` from ${r.meta["from_name"]}` : "";
-  const preview = r.preview && r.preview !== r.title ? ` — ${clip(r.preview, 120)}` : "";
+  const body = r.preview && r.preview !== r.title
+    ? isAgentSession(r) ? r.preview.replace(/\s+/g, " ").trim() : clip(r.preview, 120)
+    : "";
+  const preview = body ? ` — ${body}` : "";
   return `- ${day(r.occurred_at)} ${label}${who}: ${clip(r.title, 120)}${preview} [${REF_KIND[r.kind]}:${r.item_id}]`;
 }
 

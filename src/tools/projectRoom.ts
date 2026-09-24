@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { agentMeta } from "../supabase.js";
 import type { Ctx } from "../context.js";
-import type { TimelineRow } from "../briefing.js";
+import { isAgentSession, type TimelineRow } from "../briefing.js";
 import { isNotFoundError } from "./dbErrors.js";
 
 // ── update_agent_status ─────────────────────────────────────────────────────
@@ -238,7 +238,10 @@ export async function listProjectTimeline(ctx: Ctx, args: z.infer<typeof listPro
   const lines = rows.map((r) => {
     let label = KIND_LABEL[r.kind];
     if (r.kind === "email") label = r.meta["direction"] === "outbound" ? "Mail out" : "Mail in";
-    const preview = r.preview && r.preview !== r.title ? ` — ${r.preview.replace(/\s+/g, " ").slice(0, 160)}` : "";
+    // Claude's own session log is shown in full (see isAgentSession); every
+    // other preview keeps its 160-char cap.
+    const flat = r.preview ? r.preview.replace(/\s+/g, " ").trim() : "";
+    const preview = flat && r.preview !== r.title ? ` — ${isAgentSession(r) ? flat : flat.slice(0, 160)}` : "";
     return `- ${r.occurred_at.slice(0, 16).replace("T", " ")} ${label}: ${r.title}${preview} [${REF_KIND[r.kind]}:${r.item_id}]`;
   });
   const nextBefore = rows.length === args.limit ? rows[rows.length - 1].occurred_at : "end";

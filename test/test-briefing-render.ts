@@ -88,4 +88,23 @@ const cappedMd = renderBriefing(capped, NOW);
 check("recordings: +N more hint", cappedMd.includes(`+3 more → list_project_timeline(project_id, kinds=["audio_recording"])`));
 check("events: +N more hint", cappedMd.includes(`+2 more → list_project_timeline(project_id, kinds=["calendar_event"])`));
 
+// 9. agent_session rows: Claude's own session log is printed in full, not
+// clipped to 120 chars like every other preview — otherwise Claude cannot
+// read back what it wrote last session. Everything else keeps its cap.
+const sessions = rich.delta.filter((r) => r.kind === "journal" && r.meta["entry_type"] === "agent_session");
+check("agent_session: fixture has session rows", sessions.length >= 2);
+const longSession = sessions.find((r) => r.preview.length > 120 && r.preview.split(". ").length > 2);
+check("agent_session: fixture has a multi-sentence paragraph > 120 chars", !!longSession);
+for (const s of sessions) {
+  const full = s.preview.replace(/\s+/g, " ").trim();
+  check(`agent_session ${s.item_id.slice(-3)}: paragraph appears in full`, md.includes(`Claude session — ${full} [journal:${s.item_id}]`));
+}
+// …and an ordinary note with the same long preview is still clipped.
+const noteLong: Briefing = JSON.parse(JSON.stringify(rich));
+const asNote = noteLong.delta.find((r) => r.item_id === longSession?.item_id)!;
+asNote.meta = { ...asNote.meta, entry_type: "note" };
+const noteMd = renderBriefing(noteLong, NOW);
+const noteLine = noteMd.split("\n").find((l) => l.includes(`[journal:${asNote.item_id}]`)) ?? "";
+check("non-session preview still clipped at 120", !noteLine.includes(asNote.preview) && noteLine.includes("…"), noteLine);
+
 if (failed) process.exit(1);
