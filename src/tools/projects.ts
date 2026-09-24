@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { agentMeta } from "../supabase.js";
 import type { Ctx } from "../context.js";
-import { STAGE_TO_DB, STAGE_FROM_DB, PROJECT_STAGES } from "../constants.js";
+import { PROJECT_STAGES } from "../constants.js";
 
 export const searchProjectsSchema = z.object({
   query: z.string().optional().describe("Fuzzy search in project name — tolerates typos"),

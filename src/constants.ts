@@ -1,16 +1,7 @@
-export const STAGE_TO_DB: Record<string, string> = {
-  Identified: "identified",
-  "First Contact": "first_contact",
-  "Due Diligence": "due_diligence",
-  "Term Sheet": "term_sheet",
-  Closing: "closing",
-  Completed: "completed",
-  Cancelled: "cancelled",
-};
-
-export const STAGE_FROM_DB: Record<string, string> = Object.fromEntries(
-  Object.entries(STAGE_TO_DB).map(([k, v]) => [v, k])
-);
+// Must equal src/modules/projects/constants.ts in ../janreimanncrm —
+// test/test-stage-constants.ts fails otherwise. Stages are stored verbatim.
+export const PROJECT_STAGES = ["Planning", "Active", "In Review", "Done", "On Hold"] as const;
+export type ProjectStage = (typeof PROJECT_STAGES)[number];
 
 export const STATUS_TO_DB: Record<string, string> = {
   Open: "open",
@@ -23,13 +14,11 @@ export const STATUS_FROM_DB: Record<string, string> = Object.fromEntries(
   Object.entries(STATUS_TO_DB).map(([k, v]) => [v, k])
 );
 
-export const PROJECT_STAGES = Object.keys(STAGE_TO_DB) as [string, ...string[]];
-
 export const TASK_STATUSES = Object.keys(STATUS_TO_DB) as [string, ...string[]];
 
 export const INTERACTION_TYPES: [string, ...string[]] = [
   "Phone Call",
-  "Meeting — In Person",
+  "Meeting",
   "Video Call",
   "Email Inbound",
   "Email Outbound",
@@ -39,4 +28,3 @@ export const INTERACTION_TYPES: [string, ...string[]] = [
   "AGM — Annual General Meeting",
   "Other",
 ];
-
