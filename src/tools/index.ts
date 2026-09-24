@@ -226,10 +226,16 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     async (args) => ok(await createProject(ctx, args as Parameters<typeof createProject>[1]))
   );
 
-  server.tool(
+  // registerTool with the full object schema, not server.tool(…, .shape): the
+  // shape form makes the SDK rebuild a plain z.object(shape), which strips
+  // unknown keys — .strict() would be lost and `brief` silently dropped.
+  server.registerTool(
     "update_project",
-    "Update a project's fields — name, stage, description, budget, dates, initiative. For the status note use update_agent_status; for the brief use propose_brief.",
-    updateProjectSchema.shape,
+    {
+      description:
+        "Update a project's fields — name, stage, description, budget, dates, initiative. For the status note use update_agent_status; for the brief use propose_brief.",
+      inputSchema: updateProjectSchema,
+    },
     async (args) => ok(await updateProject(ctx, args as Parameters<typeof updateProject>[1]))
   );
 
@@ -254,10 +260,13 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     async (args) => ok(await createInitiative(ctx, args as Parameters<typeof createInitiative>[1]))
   );
 
-  server.tool(
+  // Same as update_project: the full schema keeps .strict() alive.
+  server.registerTool(
     "update_initiative",
-    "Update an initiative's name, description, status or target date",
-    updateInitiativeSchema.shape,
+    {
+      description: "Update an initiative's name, description, status or target date",
+      inputSchema: updateInitiativeSchema,
+    },
     async (args) => ok(await updateInitiative(ctx, args as Parameters<typeof updateInitiative>[1]))
   );
 
