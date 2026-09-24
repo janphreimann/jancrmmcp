@@ -1,4 +1,5 @@
-import { resolveProjectQuery, isNotFoundStampError } from "../src/tools/openProject.js";
+import { resolveProjectQuery } from "../src/tools/openProject.js";
+import { isNotFoundError } from "../src/tools/dbErrors.js";
 
 let failed = 0;
 function check(name: string, ok: boolean) { console.log(`  ${ok ? "✓" : "✗"}  ${name}`); if (!ok) failed++; }
@@ -13,10 +14,10 @@ check("two close scores → many", resolveProjectQuery([hit("a", 0.7), hit("b", 
 check("weak top → many", resolveProjectQuery([hit("a", 0.5), hit("b", 0.1)]).kind === "many");
 check("gap exactly 0.25 → many (boundary is exclusive)", resolveProjectQuery([hit("a", 0.75), hit("b", 0.5)]).kind === "many");
 
-check("42501 is not-found", isNotFoundStampError({ code: "42501" }) === true);
-check("23503 is not-found", isNotFoundStampError({ code: "23503" }) === true);
-check("P0001 is not-found", isNotFoundStampError({ code: "P0001" }) === true);
-check("08006 is not not-found", isNotFoundStampError({ code: "08006" }) === false);
-check("undefined code is not not-found", isNotFoundStampError({}) === false);
+check("42501 is not-found", isNotFoundError({ code: "42501" }) === true);
+check("23503 is not-found", isNotFoundError({ code: "23503" }) === true);
+check("P0001 is not-found", isNotFoundError({ code: "P0001" }) === true);
+check("08006 is not not-found", isNotFoundError({ code: "08006" }) === false);
+check("undefined code is not not-found", isNotFoundError({}) === false);
 
 if (failed) process.exit(1);

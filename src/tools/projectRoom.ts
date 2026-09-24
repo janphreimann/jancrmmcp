@@ -2,6 +2,7 @@ import { z } from "zod";
 import { agentMeta } from "../supabase.js";
 import type { Ctx } from "../context.js";
 import type { TimelineRow } from "../briefing.js";
+import { isNotFoundError } from "./dbErrors.js";
 
 // ── update_agent_status ─────────────────────────────────────────────────────
 export const updateAgentStatusSchema = z.object({
@@ -43,7 +44,14 @@ export async function logProjectActivity(ctx: Ctx, args: z.infer<typeof logProje
     })
     .select("id")
     .single();
-  if (error) throw new Error(`Project ${args.project_id} not found`);
+  if (error) {
+    // A project the caller can't see fails via the FK/RLS/trigger on
+    // project_id — same message as "not found" so this isn't an oracle for
+    // foreign ids. Anything else (network, grant, a real constraint
+    // violation) is a genuine fault and must surface as such.
+    if (isNotFoundError(error)) throw new Error(`Project ${args.project_id} not found`);
+    throw new Error(error.message);
+  }
   return { id: data.id, message: "Session logged" };
 }
 
@@ -57,13 +65,14 @@ export const proposeBriefSchema = z.object({
 const OPEN_BRIEF_PROPOSAL_MESSAGE = "An open brief proposal already exists — wait for the user to resolve it.";
 
 export async function proposeBrief(ctx: Ctx, args: z.infer<typeof proposeBriefSchema>) {
-  const { data: open } = await ctx.db
+  const { data: open, error: openErr } = await ctx.db
     .from("project_journal")
     .select("id")
     .eq("project_id", args.project_id)
     .eq("entry_type", "brief_proposal")
     .eq("metadata->>status", "open")
     .limit(1);
+  if (openErr) throw new Error(openErr.message);
   if (open?.length) throw new Error(OPEN_BRIEF_PROPOSAL_MESSAGE);
 
   const { data, error } = await ctx.db
@@ -84,7 +93,9 @@ export async function proposeBrief(ctx: Ctx, args: z.infer<typeof proposeBriefSc
     if ((error as { code?: string }).code === "23505") throw new Error(OPEN_BRIEF_PROPOSAL_MESSAGE);
     // A project the caller can't see fails here too (RLS/insert trigger) —
     // same message as "not found" so this isn't an oracle for foreign ids.
-    throw new Error(`Project ${args.project_id} not found`);
+    // Anything else is a genuine fault and must surface as such.
+    if (isNotFoundError(error)) throw new Error(`Project ${args.project_id} not found`);
+    throw new Error(error.message);
   }
   return { id: data.id, message: "Brief proposal recorded — the user will apply or reject it" };
 }
@@ -102,37 +113,58 @@ const ITEM_TABLE: Record<z.infer<typeof linkProjectItemSchema>["item_type"], { t
   calendar_event: { table: "calendar_events", column: "id" },
 };
 
+const LINK_LINKED_MESSAGE = "Already linked to the project";
+const LINK_PROMOTED_MESSAGE = "Linked to the project (shown with an Agent badge until the user approves)";
+
+/**
+ * Flips an existing, non-linked project_items row to linked. Guarded with
+ * `.neq("status", "linked")` so a concurrent promote never double-stamps
+ * `linked_at`/`linked_by`; on zero rows we re-read to tell "someone else
+ * just linked it" (report the same success) from "the row disappeared or
+ * the project vanished out from under us" (not found).
+ */
+async function promoteProjectItem(ctx: Ctx, id: string, projectId: string) {
+  const { data, error } = await ctx.db
+    .from("project_items")
+    .update({ status: "linked", linked_by: ctx.userId, linked_at: new Date().toISOString(), ...agentMeta() })
+    .eq("id", id)
+    .neq("status", "linked")
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (data?.length) return { id, message: LINK_PROMOTED_MESSAGE };
+
+  const { data: after, error: afterErr } = await ctx.db.from("project_items").select("id, status").eq("id", id).maybeSingle();
+  if (afterErr) throw new Error(afterErr.message);
+  if (after?.status === "linked") return { id: after.id, message: LINK_LINKED_MESSAGE };
+  throw new Error(`Project ${projectId} not found`);
+}
+
 export async function linkProjectItem(ctx: Ctx, args: z.infer<typeof linkProjectItemSchema>) {
   // The caller must be able to read the target; a foreign id yields zero
   // rows through RLS and gets the same "not found" as a nonexistent one.
   const t = ITEM_TABLE[args.item_type];
-  const { data: target } = await ctx.db.from(t.table).select(t.column).eq(t.column, args.item_id).limit(1);
+  const { data: target, error: targetErr } = await ctx.db.from(t.table).select(t.column).eq(t.column, args.item_id).limit(1);
+  if (targetErr) throw new Error(targetErr.message);
   if (!target?.length) throw new Error("Item not found");
 
   // A row may already exist (suggested/dismissed by the basket, or linked by
   // a human). Never overwrite a human link with agent provenance — only
   // promote a non-linked row, or insert a fresh one.
-  const { data: existing } = await ctx.db
+  const { data: existing, error: existingErr } = await ctx.db
     .from("project_items")
     .select("id, status")
     .eq("project_id", args.project_id)
     .eq("item_type", args.item_type)
     .eq("item_id", args.item_id)
     .maybeSingle();
+  if (existingErr) throw new Error(existingErr.message);
 
   if (existing?.status === "linked") {
-    return { id: existing.id, message: "Already linked to the project" };
+    return { id: existing.id, message: LINK_LINKED_MESSAGE };
   }
 
   if (existing) {
-    const { data, error } = await ctx.db
-      .from("project_items")
-      .update({ status: "linked", linked_by: ctx.userId, linked_at: new Date().toISOString(), ...agentMeta() })
-      .eq("id", existing.id)
-      .select("id");
-    if (error) throw new Error(error.message);
-    if (!data?.length) throw new Error(`Project ${args.project_id} not found`);
-    return { id: existing.id, message: "Linked to the project (shown with an Agent badge until the user approves)" };
+    return promoteProjectItem(ctx, existing.id, args.project_id);
   }
 
   const { data, error } = await ctx.db
@@ -148,8 +180,27 @@ export async function linkProjectItem(ctx: Ctx, args: z.infer<typeof linkProject
     })
     .select("id")
     .single();
-  if (error) throw new Error(`Project ${args.project_id} not found`);
-  return { id: data.id, message: "Linked to the project (shown with an Agent badge until the user approves)" };
+  if (error) {
+    if ((error as { code?: string }).code === "23505") {
+      // Concurrent link_project_item call won the race between our select
+      // and our insert. Re-read the row it created and report its actual
+      // state instead of erroring on a call that, semantically, succeeded.
+      const { data: after, error: afterErr } = await ctx.db
+        .from("project_items")
+        .select("id, status")
+        .eq("project_id", args.project_id)
+        .eq("item_type", args.item_type)
+        .eq("item_id", args.item_id)
+        .maybeSingle();
+      if (afterErr) throw new Error(afterErr.message);
+      if (after?.status === "linked") return { id: after.id, message: LINK_LINKED_MESSAGE };
+      if (after) return promoteProjectItem(ctx, after.id, args.project_id);
+      throw new Error(`Project ${args.project_id} not found`);
+    }
+    if (isNotFoundError(error)) throw new Error(`Project ${args.project_id} not found`);
+    throw new Error(error.message);
+  }
+  return { id: data.id, message: LINK_PROMOTED_MESSAGE };
 }
 
 // ── list_project_timeline ───────────────────────────────────────────────────

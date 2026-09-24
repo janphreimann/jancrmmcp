@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Ctx } from "../context.js";
 import { renderBriefing, type Briefing } from "../briefing.js";
+import { isNotFoundError } from "./dbErrors.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -13,9 +14,9 @@ export const openProjectSchema = z.object({
 type Hit = { id: string; name: string; match_score: number; stage?: string; initiative_id?: string | null; updated_at?: string };
 
 /**
- * Opens on one hit, or on a clear winner (score ≥ 0.6 and ≥ 0.25 ahead of
- * the runner-up). Anything else is a list for the user to disambiguate —
- * never a silent LIMIT 1.
+ * Opens on one hit, or on a clear winner (score ≥ 0.6 and more than 0.25
+ * ahead of the runner-up). Anything else is a list for the user to
+ * disambiguate — never a silent LIMIT 1.
  */
 export function resolveProjectQuery(hits: Hit[]): { kind: "none" } | { kind: "one"; id: string } | { kind: "many" } {
   if (hits.length === 0) return { kind: "none" };
@@ -23,19 +24,6 @@ export function resolveProjectQuery(hits: Hit[]): { kind: "none" } | { kind: "on
   const [top, second] = hits;
   if (top.match_score >= 0.6 && top.match_score - second.match_score > 0.25) return { kind: "one", id: top.id };
   return { kind: "many" };
-}
-
-/**
- * `stamp_project_visit` fails on a foreign, unknown or (via the trigger it
- * shares with inserts) missing project in exactly three ways: the RLS
- * WITH CHECK rejects a foreign org (42501), the FK rejects an unknown id
- * (23503), or the function itself raises P0001 for a nonexistent project.
- * Only those collapse into "not found" — anything else (network blip,
- * revoked grant, misconfiguration) is a real fault and must not be hidden
- * behind the same no-access message, or debugging it becomes guesswork.
- */
-export function isNotFoundStampError(err: { code?: string }): boolean {
-  return err.code === "42501" || err.code === "23503" || err.code === "P0001";
 }
 
 export async function openProject(ctx: Ctx, args: z.infer<typeof openProjectSchema>): Promise<string> {
@@ -70,11 +58,13 @@ export async function openProject(ctx: Ctx, args: z.infer<typeof openProjectSche
 
   const { data: since, error: stampErr } = await ctx.db.rpc("stamp_project_visit", { p_project_id: projectId, p_channel: "mcp" });
   if (stampErr) {
-    // A foreign/unknown id fails the FK (23503), the RLS WITH CHECK (42501)
-    // or the function's own P0001 raise. Same message as "not found" so the
-    // answer is not an oracle for which ids exist. Anything else is a real
-    // fault (network, revoked grant, misconfig) and must surface as such.
-    if (isNotFoundStampError(stampErr)) return "No project with that id (or you have no access).";
+    // A foreign/unknown id fails the FK (23503), the RLS WITH CHECK (42501),
+    // or (P0001) the `set_organization_id_from_project()` trigger's own
+    // RAISE for a nonexistent project — stamp_project_visit itself has no
+    // RAISE. Same message as "not found" so the answer is not an oracle for
+    // which ids exist. Anything else is a real fault (network, revoked
+    // grant, misconfig) and must surface as such.
+    if (isNotFoundError(stampErr)) return "No project with that id (or you have no access).";
     throw new Error(stampErr.message);
   }
 
