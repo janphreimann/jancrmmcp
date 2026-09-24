@@ -100,7 +100,7 @@ export const getDocumentContentSchema = z.object({
 export async function getDocumentContent(ctx: Ctx, args: z.infer<typeof getDocumentContentSchema>) {
   const { data: doc, error } = await ctx.db
     .from("documents")
-    .select("id, file_name, file_url, file_size, description, folder_id, uploaded_at")
+    .select("id, file_name, file_url, file_size, description, folder_id, uploaded_at, extracted_text, extracted_at, extraction_error")
     .eq("id", args.id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -111,6 +111,23 @@ export async function getDocumentContent(ctx: Ctx, args: z.infer<typeof getDocum
     .from("documents")
     .createSignedUrl(doc.file_url, 3600);
   if (urlErr) throw new Error(urlErr.message);
+
+  // Server-side extracted text (PDF/DOCX/PPTX/XLSX; filled by the
+  // extract-document-text edge function). Takes precedence: Claude cannot
+  // fetch the signed URL itself through MCP.
+  if (doc.extracted_text != null) {
+    return {
+      id: doc.id,
+      file_name: doc.file_name,
+      description: doc.description,
+      folder_id: doc.folder_id,
+      uploaded_at: doc.uploaded_at,
+      content: doc.extracted_text,
+      extracted_at: doc.extracted_at,
+      extraction_error: doc.extraction_error,
+      signed_url: urlData.signedUrl,
+    };
+  }
 
   const ext = (doc.file_name.split(".").pop() || "").toLowerCase();
   const textTypes = ["txt", "md", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "ts", "js", "tsx", "jsx", "py", "sql"];
@@ -138,6 +155,7 @@ export async function getDocumentContent(ctx: Ctx, args: z.infer<typeof getDocum
     uploaded_at: doc.uploaded_at,
     content: null,
     signed_url: urlData.signedUrl,
+    extraction_error: doc.extraction_error,
     note: "Binary file — use signed_url to download",
   };
 }
