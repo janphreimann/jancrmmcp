@@ -1,0 +1,71 @@
+// Snapshot + invariants for renderBriefing. Fixtures live in the CRM repo so
+// the CRM's copy of the renderer (Plan B) tests against the same files.
+// Regenerate the snapshot after an intentional change:
+//   UPDATE_SNAPSHOT=1 npx tsx test/test-briefing-render.ts
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { renderBriefing, type Briefing } from "../src/briefing.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const fixtures = resolve(here, "../../janreimanncrm/docs/superpowers/fixtures");
+const NOW = new Date("2026-09-24T09:00:00Z");
+
+let failed = 0;
+function check(name: string, ok: boolean, detail = "") {
+  console.log(`  ${ok ? "✓" : "✗"}  ${name}${ok || !detail ? "" : "\n     " + detail}`);
+  if (!ok) failed++;
+}
+function load(name: string): Briefing {
+  return JSON.parse(readFileSync(resolve(fixtures, name), "utf8"));
+}
+
+// 1. rich fixture: snapshot
+const rich = load("briefing-fixture.json");
+const md = renderBriefing(rich, NOW);
+const snapPath = resolve(fixtures, "briefing-fixture.md");
+if (process.env.UPDATE_SNAPSHOT || !existsSync(snapPath)) {
+  writeFileSync(snapPath, md);
+  console.log("  (snapshot written — review it against spec §4.2, then commit)");
+}
+check("rich: matches snapshot", md === readFileSync(snapPath, "utf8"));
+
+// 2. rich: delta capped at 30 lines + a "+5 more" line
+const deltaSection = md.split("## Since your last visit")[1]?.split("## Open")[0] ?? "";
+const deltaLines = deltaSection.split("\n").filter((l) => l.startsWith("- "));
+check("rich: delta has 30 lines", deltaLines.length === 30, `got ${deltaLines.length}`);
+check("rich: +5 more hint", /\+5 more \(/.test(deltaSection));
+
+// 3. rich: every ref points at an id in the fixture
+const ids = new Set<string>();
+const collect = (v: unknown) => {
+  if (Array.isArray(v)) v.forEach(collect);
+  else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) { if (k === "id" || k === "item_id") ids.add(String(x)); collect(x); }
+};
+collect(rich);
+const refs = [...md.matchAll(/\[(?:journal|task|interaction|email|recording|event|document):([0-9a-f-]{36})\]/g)].map((m) => m[1]);
+check("rich: refs present", refs.length > 0);
+check("rich: all refs resolve", refs.every((r) => ids.has(r)), refs.filter((r) => !ids.has(r)).join(","));
+
+// 4. rich: header facts
+check("rich: initiative in header", md.includes("Part of: "));
+check("rich: open proposal warning", md.includes("open brief proposal(s)"));
+check("rich: basket counts", md.includes("Suggestion basket: 4 emails, 1 recordings"));
+
+// 5. first visit
+const first = renderBriefing(load("briefing-first-visit.json"), NOW);
+check("first visit: header", first.includes("## First visit — everything below is new to you"));
+check("first visit: no since line", !first.includes("## Since your last visit"));
+
+// 6. empty project: placeholders, no empty headers
+const empty = renderBriefing(load("briefing-empty.json"), NOW);
+check("empty: status placeholder", empty.includes("You have not written a status yet"));
+check("empty: brief placeholder", empty.includes("No brief yet."));
+check("empty: nothing open", empty.includes("Nothing open."));
+check("empty: no list headers", !/Documents \(|Interactions \(|Recordings \(|Events \(/.test(empty));
+check("empty: journal line", empty.includes("Journal: 0 entries, 0 pinned"));
+
+// 7. size
+check("rich: under 12k chars", md.length < 12000, `${md.length}`);
+
+if (failed) process.exit(1);
