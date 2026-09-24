@@ -3,11 +3,13 @@ import { agentMeta } from "../supabase.js";
 import type { Ctx } from "../context.js";
 import { PROJECT_STAGES } from "../constants.js";
 
+const PROJECT_LIST_COLUMNS = "id, name, stage, budget_amount, initiative_id, main_contact_id, created_at, updated_at";
+
 export const searchProjectsSchema = z.object({
   query: z.string().optional().describe("Fuzzy search in project name — tolerates typos"),
   stage: z.enum(PROJECT_STAGES).optional(),
-  project_type: z.string().optional(),
   contact_id: z.string().uuid().optional().describe("Filter to projects linked to this contact"),
+  initiative_id: z.string().uuid().optional().describe("Filter to projects in this initiative"),
   limit: z.number().int().min(1).max(100).default(25),
 });
 
@@ -21,32 +23,21 @@ export async function searchProjects(ctx: Ctx, args: z.infer<typeof searchProjec
       p_limit: args.limit,
     });
     if (error) throw new Error(error.message);
-
-    projects = (data ?? []).map((d: { stage: string; [key: string]: unknown }) => ({
-      ...d,
-      stage: STAGE_FROM_DB[d.stage] ?? d.stage,
-    }));
-
+    projects = (data ?? []) as Array<Record<string, unknown>>;
     if (args.stage) projects = projects.filter((d) => d.stage === args.stage);
-    if (args.project_type) projects = projects.filter((d) => d.project_type === args.project_type);
+    if (args.initiative_id) projects = projects.filter((d) => d.initiative_id === args.initiative_id);
   } else {
     let q = ctx.db
       .from("projects")
-      .select("id, name, stage, project_type, target_volume, main_contact_id, created_at")
+      .select(PROJECT_LIST_COLUMNS)
       .is("deleted_at", null)
-      .order("created_at", { ascending: false })
+      .order("updated_at", { ascending: false })
       .limit(args.limit);
-
-    if (args.stage) q = q.eq("stage", STAGE_TO_DB[args.stage] ?? args.stage);
-    if (args.project_type) q = q.eq("project_type", args.project_type);
-
+    if (args.stage) q = q.eq("stage", args.stage);
+    if (args.initiative_id) q = q.eq("initiative_id", args.initiative_id);
     const { data, error } = await q;
     if (error) throw new Error(error.message);
-
-    projects = (data ?? []).map((d: { stage: string; [key: string]: unknown }) => ({
-      ...d,
-      stage: STAGE_FROM_DB[d.stage] ?? d.stage,
-    }));
+    projects = (data ?? []) as Array<Record<string, unknown>>;
   }
 
   if (args.contact_id) {
@@ -65,6 +56,10 @@ export const getProjectSchema = z.object({
   id: z.string().uuid(),
 });
 
+/**
+ * Raw record plus its links. Orientation (state, delta, open items, index)
+ * is open_project's job — this stays for programmatic access to the row.
+ */
 export async function getProject(ctx: Ctx, args: z.infer<typeof getProjectSchema>) {
   const { data, error } = await ctx.db
     .from("projects")
@@ -75,95 +70,51 @@ export async function getProject(ctx: Ctx, args: z.infer<typeof getProjectSchema
   if (error) throw new Error(error.message);
   if (!data) return null;
 
-  // context: everything an agent needs to orient beyond the static row and
-  // the manually-written brief — assembled fresh on every call, same shape
-  // the webapp's ProjectContextBlock shows a human (see
-  // ../janreimanncrm/src/modules/projects/contextApi.ts). Kept to one
-  // get_project round-trip instead of forcing the agent to chain
-  // search_tasks/list_documents/etc. itself.
-  const [contactLinks, companyLinks, tagRows, initiativeRow, journalRows, taskRows, documentRows, nextStepRows] =
-    await Promise.all([
-      ctx.db
-        .from("project_contacts")
-        .select("contact_id, contacts:contact_id(id, first_name, last_name, email_1)")
-        .eq("project_id", args.id),
-      ctx.db
-        .from("project_companies")
-        .select("company_id, companies:company_id(id, name)")
-        .eq("project_id", args.id),
-      ctx.db
-        .from("project_tags")
-        .select("tag_id, tags:tag_id(id, name, color)")
-        .eq("project_id", args.id),
-      data.initiative_id
-        ? ctx.db.from("initiatives").select("id, name, description, status").eq("id", data.initiative_id).maybeSingle()
-        : Promise.resolve({ data: null }),
-      ctx.db
-        .from("project_journal")
-        .select("id, entry_type, content, created_at")
-        .eq("project_id", args.id)
-        .order("created_at", { ascending: false })
-        .limit(8),
-      ctx.db
-        .from("tasks")
-        .select("id, title, due_date, priority")
-        .eq("project_id", args.id)
-        .in("status", ["open", "in_progress"])
-        .is("deleted_at", null)
-        .order("due_date", { ascending: true, nullsFirst: false })
-        .limit(10),
-      ctx.db
-        .from("documents")
-        .select("id, file_name, uploaded_at")
-        .eq("project_id", args.id)
-        .is("deleted_at", null)
-        .order("uploaded_at", { ascending: false })
-        .limit(5),
-      ctx.db
-        .from("project_next_steps")
-        .select("id, title, rationale, created_at")
-        .eq("project_id", args.id)
-        .eq("status", "suggested")
-        .order("created_at", { ascending: false }),
-    ]);
+  const [contactLinks, companyLinks, tagRows, initiativeRow] = await Promise.all([
+    ctx.db
+      .from("project_contacts")
+      .select("contact_id, contacts:contact_id(id, first_name, last_name, email_1)")
+      .eq("project_id", args.id),
+    ctx.db
+      .from("project_companies")
+      .select("company_id, companies:company_id(id, name)")
+      .eq("project_id", args.id),
+    ctx.db
+      .from("project_tags")
+      .select("tag_id, tags:tag_id(id, name, color)")
+      .eq("project_id", args.id),
+    data.initiative_id
+      ? ctx.db.from("initiatives").select("id, name, description, status").eq("id", data.initiative_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
 
   return {
     ...data,
-    stage: STAGE_FROM_DB[data.stage] ?? data.stage,
     contacts: (contactLinks.data ?? []).map((r: { contacts: unknown }) => r.contacts),
     companies: (companyLinks.data ?? []).map((r: { companies: unknown }) => r.companies),
     tags: (tagRows.data ?? []).map((r: { tags: unknown }) => r.tags),
     initiative: initiativeRow.data ?? null,
-    recent_activity: journalRows.data ?? [],
-    open_tasks: taskRows.data ?? [],
-    recent_documents: documentRows.data ?? [],
-    open_next_steps: nextStepRows.data ?? [],
   };
 }
 
 export const createProjectSchema = z.object({
   name: z.string().min(1),
-  project_type: z.string().default("Other"),
-  stage: z.enum(PROJECT_STAGES).default("Identified"),
+  stage: z.enum(PROJECT_STAGES).default("Planning"),
   description: z.string().optional().nullable(),
-  target_volume: z.number().optional().nullable(),
-  invested_volume: z.number().optional().nullable(),
+  budget_amount: z.number().optional().nullable(),
   main_contact_id: z.string().uuid().optional().nullable(),
   contact_ids: z.array(z.string().uuid()).default([]),
   company_ids: z.array(z.string().uuid()).default([]),
+  initiative_id: z.string().uuid().optional().nullable(),
   start_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
   expected_close_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
 });
 
 export async function createProject(ctx: Ctx, args: z.infer<typeof createProjectSchema>) {
-  const { contact_ids, company_ids, stage, ...fields } = args;
+  const { contact_ids, company_ids, ...fields } = args;
   const { data, error } = await ctx.db
     .from("projects")
-    .insert({
-      ...fields,
-      stage: STAGE_TO_DB[stage] ?? "identified",
-      ...agentMeta(),
-    })
+    .insert({ ...fields, description: fields.description ?? "", created_by: ctx.userId, ...agentMeta() })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
@@ -184,30 +135,24 @@ export async function createProject(ctx: Ctx, args: z.infer<typeof createProject
   return { id: data.id, message: "Project created successfully" };
 }
 
-export const updateProjectSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().optional(),
-  stage: z.enum(PROJECT_STAGES).optional(),
-  description: z.string().optional().nullable(),
-  brief: z.string().optional().nullable().describe(
-    "The project's living orientation note (markdown) — its current status, key facts, decisions, open questions, next steps. Keep it current with anything durable you learn; every change is logged to the project's journal automatically."
-  ),
-  ai_summary: z.string().optional().describe(
-    "Short 2-4 sentence agent-maintained status summary shown at the top of the project. Reserved for the Project Curator agent's periodic refresh — other agents should prefer `brief` for anything they learn. Setting this stamps `ai_summary_updated_at` automatically."
-  ),
-  target_volume: z.number().optional().nullable(),
-  invested_volume: z.number().optional().nullable(),
-  start_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
-  expected_close_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
-  actual_close_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
-  project_type: z.string().optional(),
-});
+// Zone rule (spec §2.1): neither `brief` (human-owned, use propose_brief)
+// nor the status note (use update_agent_status) is writable here. .strict()
+// turns an attempt into a validation error instead of a silent drop.
+export const updateProjectSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().optional(),
+    stage: z.enum(PROJECT_STAGES).optional(),
+    description: z.string().optional().nullable(),
+    budget_amount: z.number().optional().nullable(),
+    initiative_id: z.string().uuid().optional().nullable(),
+    start_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
+    expected_close_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
+  })
+  .strict();
 
 export async function updateProject(ctx: Ctx, args: z.infer<typeof updateProjectSchema>) {
-  const { id, stage, ...rest } = args;
-  const updates: Record<string, unknown> = { ...rest };
-  if (stage) updates.stage = STAGE_TO_DB[stage] ?? stage;
-  if (updates.ai_summary !== undefined) updates.ai_summary_updated_at = new Date().toISOString();
+  const { id, ...updates } = args;
   const { data, error } = await ctx.db
     .from("projects")
     .update(updates)

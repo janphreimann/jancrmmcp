@@ -60,13 +60,15 @@ export async function createInitiative(ctx: Ctx, args: z.infer<typeof createInit
   return { id: data.id, message: "Initiative created successfully" };
 }
 
-export const updateInitiativeSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().optional(),
-  description: z.string().optional(),
-  status: z.enum(["active", "paused", "done"]).optional(),
-  target_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
-});
+export const updateInitiativeSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    status: z.enum(["active", "paused", "done"]).optional(),
+    target_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),
+  })
+  .strict();
 
 export async function updateInitiative(ctx: Ctx, args: z.infer<typeof updateInitiativeSchema>) {
   const { id, ...updates } = args;

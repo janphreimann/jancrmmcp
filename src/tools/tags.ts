@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { Ctx } from "../context.js";
-import { STAGE_FROM_DB } from "../constants.js";
 
 export const listTagsSchema = z.object({});
 
@@ -60,7 +59,7 @@ export async function getPipelineStats(ctx: Ctx) {
 
   const stats: Record<string, { count: number; total_volume: number }> = {};
   (projects ?? []).forEach((d: { stage: string; target_volume: number | null }) => {
-    const stage = STAGE_FROM_DB[d.stage] ?? d.stage ?? "Unknown";
+    const stage = d.stage ?? "Unknown";
     if (!stats[stage]) stats[stage] = { count: 0, total_volume: 0 };
     stats[stage].count++;
     stats[stage].total_volume += d.target_volume ?? 0;
