@@ -19,6 +19,13 @@ import {
   updateProjectSchema, updateProject,
 } from "./projects.js";
 import {
+  searchInitiativesSchema, searchInitiatives,
+  getInitiativeSchema, getInitiative,
+  createInitiativeSchema, createInitiative,
+  updateInitiativeSchema, updateInitiative,
+  suggestNextStepSchema, suggestNextStep,
+} from "./initiatives.js";
+import {
   createTaskSchema, createTask,
   searchTasksSchema, searchTasks,
   getTaskSchema, getTask,
@@ -129,30 +136,65 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "search_projects",
-    "Search projects by name, stage, project type, or linked contact — fuzzy, tolerates typos",
+    "Search projects by name (fuzzy), stage, initiative or linked contact. For orientation on one project use open_project.",
     searchProjectsSchema.shape,
     async (args) => ok(await searchProjects(ctx, args as Parameters<typeof searchProjects>[1]))
   );
 
   server.tool(
     "get_project",
-    "Get full project details by UUID, including linked contacts, companies and tags",
+    "Raw project record with linked contacts, companies, tags and initiative. For orientation use open_project — it returns the state, what changed, what is open and an index.",
     getProjectSchema.shape,
     async (args) => ok(await getProject(ctx, args as Parameters<typeof getProject>[1]))
   );
 
   server.tool(
     "create_project",
-    "Create a new project with optional linked contacts and companies",
+    "Create a new project with optional linked contacts, companies and initiative",
     createProjectSchema.shape,
     async (args) => ok(await createProject(ctx, args as Parameters<typeof createProject>[1]))
   );
 
   server.tool(
     "update_project",
-    "Update a project — stage, description, volumes, dates",
+    "Update a project's fields — name, stage, description, budget, dates, initiative. For the status note use update_agent_status; for the brief use propose_brief.",
     updateProjectSchema.shape,
     async (args) => ok(await updateProject(ctx, args as Parameters<typeof updateProject>[1]))
+  );
+
+  server.tool(
+    "search_initiatives",
+    "List or search initiatives (groups of projects) by name and status",
+    searchInitiativesSchema.shape,
+    async (args) => ok(await searchInitiatives(ctx, args as Parameters<typeof searchInitiatives>[1]))
+  );
+
+  server.tool(
+    "get_initiative",
+    "Get an initiative with its description and the projects in it",
+    getInitiativeSchema.shape,
+    async (args) => ok(await getInitiative(ctx, args as Parameters<typeof getInitiative>[1]))
+  );
+
+  server.tool(
+    "create_initiative",
+    "Create an initiative — a named group of projects with a description of what success looks like",
+    createInitiativeSchema.shape,
+    async (args) => ok(await createInitiative(ctx, args as Parameters<typeof createInitiative>[1]))
+  );
+
+  server.tool(
+    "update_initiative",
+    "Update an initiative's name, description, status or target date",
+    updateInitiativeSchema.shape,
+    async (args) => ok(await updateInitiative(ctx, args as Parameters<typeof updateInitiative>[1]))
+  );
+
+  server.tool(
+    "suggest_next_step",
+    "Suggest a concrete, actionable next step for a project. The user reviews it in the CRM and turns it into a task or dismisses it. Check the briefing's suggested next steps first so you don't repeat one.",
+    suggestNextStepSchema.shape,
+    async (args) => ok(await suggestNextStep(ctx, args as Parameters<typeof suggestNextStep>[1]))
   );
 
   server.tool(
