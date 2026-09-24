@@ -182,11 +182,13 @@ const EXTRACTABLE = /\.(pdf|docx|pptx|xlsx)$/i;
 /**
  * Stößt die Textextraktion (CRM-Edge-Function extract-document-text) an —
  * mit dem Token des Nutzers, damit die Function die Zeile durch dessen RLS
- * liest. Fire and forget: ein Fehler hier darf den Upload nie scheitern lassen.
+ * liest. Awaited (mit 5-s-Timeout), weil ein nicht abgewarteter fetch auf
+ * Vercel verworfen werden kann, sobald die Tool-Antwort rausgeht. Trotzdem
+ * nie fatal: Fehler und Timeouts werden geschluckt, der Backfill holt nach.
  */
-function triggerExtraction(ctx: Ctx, documentId: string, fileName: string): void {
+async function triggerExtraction(ctx: Ctx, documentId: string, fileName: string): Promise<void> {
   if (!EXTRACTABLE.test(fileName)) return;
-  fetch(`${supabaseUrl}/functions/v1/extract-document-text`, {
+  await fetch(`${supabaseUrl}/functions/v1/extract-document-text`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${ctx.accessToken}`,
@@ -194,7 +196,8 @@ function triggerExtraction(ctx: Ctx, documentId: string, fileName: string): void
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ document_id: documentId }),
-  }).catch(() => {});
+    signal: AbortSignal.timeout(5000),
+  }).then((r) => r.body?.cancel()).catch(() => {});
 }
 
 export const createTextDocumentSchema = z.object({
@@ -249,7 +252,7 @@ export async function createTextDocument(ctx: Ctx, args: z.infer<typeof createTe
 
   const { data, error } = await ctx.db.from("documents").insert(insert).select("id").single();
   if (error) throw new Error(error.message);
-  triggerExtraction(ctx, data.id, file_name);
+  await triggerExtraction(ctx, data.id, file_name);
   return { id: data.id, message: `Document "${file_name}" created successfully` };
 }
 
@@ -331,7 +334,7 @@ export async function uploadBinaryDocument(ctx: Ctx, args: z.infer<typeof upload
 
   const { data, error } = await ctx.db.from("documents").insert(insert).select("id").single();
   if (error) throw new Error(error.message);
-  triggerExtraction(ctx, data.id, file_name);
+  await triggerExtraction(ctx, data.id, file_name);
 
   return {
     id: data.id,
