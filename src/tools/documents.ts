@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { randomUUID } from "crypto";
-import { agentMeta } from "../supabase.js";
+import { agentMeta, supabaseAnonKey, supabaseUrl } from "../supabase.js";
 import type { Ctx } from "../context.js";
 
 // ─── Folder tools ─────────────────────────────────────────────────────────────
@@ -177,6 +177,26 @@ function storagePathFor(ctx: Ctx, fileName: string, entityType: string, entityId
   return `${ctx.orgId}/${folder}/${idPart}/${randomUUID()}_${safeName}`;
 }
 
+const EXTRACTABLE = /\.(pdf|docx|pptx|xlsx)$/i;
+
+/**
+ * Stößt die Textextraktion (CRM-Edge-Function extract-document-text) an —
+ * mit dem Token des Nutzers, damit die Function die Zeile durch dessen RLS
+ * liest. Fire and forget: ein Fehler hier darf den Upload nie scheitern lassen.
+ */
+function triggerExtraction(ctx: Ctx, documentId: string, fileName: string): void {
+  if (!EXTRACTABLE.test(fileName)) return;
+  fetch(`${supabaseUrl}/functions/v1/extract-document-text`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.accessToken}`,
+      apikey: supabaseAnonKey!,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ document_id: documentId }),
+  }).catch(() => {});
+}
+
 export const createTextDocumentSchema = z.object({
   file_name: z.string().min(1).describe(
     "File name including extension, e.g. 'research-notes.md' or 'report.txt'"
@@ -229,6 +249,7 @@ export async function createTextDocument(ctx: Ctx, args: z.infer<typeof createTe
 
   const { data, error } = await ctx.db.from("documents").insert(insert).select("id").single();
   if (error) throw new Error(error.message);
+  triggerExtraction(ctx, data.id, file_name);
   return { id: data.id, message: `Document "${file_name}" created successfully` };
 }
 
@@ -310,6 +331,7 @@ export async function uploadBinaryDocument(ctx: Ctx, args: z.infer<typeof upload
 
   const { data, error } = await ctx.db.from("documents").insert(insert).select("id").single();
   if (error) throw new Error(error.message);
+  triggerExtraction(ctx, data.id, file_name);
 
   return {
     id: data.id,
