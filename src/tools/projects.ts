@@ -135,15 +135,16 @@ export async function createProject(ctx: Ctx, args: z.infer<typeof createProject
   return { id: data.id, message: "Project created successfully" };
 }
 
-// Zone rule (spec §2.1): neither `brief` (human-owned, use propose_brief)
-// nor the status note (use update_agent_status) is writable here. .strict()
-// turns an attempt into a validation error instead of a silent drop.
+// Zone rule (spec §2.1): neither the description (human-owned, use
+// propose_description) nor the status note (use update_agent_status) is
+// writable here. .strict() turns an attempt into a validation error instead
+// of a silent drop. create_project still takes a description — a new project
+// has no human text yet to protect.
 export const updateProjectSchema = z
   .object({
     id: z.string().uuid(),
     name: z.string().optional(),
     stage: z.enum(PROJECT_STAGES).optional(),
-    description: z.string().optional().nullable(),
     budget_amount: z.number().optional().nullable(),
     initiative_id: z.string().uuid().optional().nullable(),
     start_date: z.string().optional().nullable().describe("ISO date YYYY-MM-DD"),

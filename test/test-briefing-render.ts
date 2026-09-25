@@ -60,7 +60,7 @@ check("rich: all refs resolve", refs.every((r) => ids.has(r)), refs.filter((r) =
 
 // 4. rich: header facts
 check("rich: initiative in header", md.includes("Part of: "));
-check("rich: open proposal warning", md.includes("open brief proposal(s)"));
+check("rich: open proposal warning", md.includes("open description proposal(s)"));
 check("rich: basket counts", md.includes("Suggestion basket: 4 emails, 1 recordings"));
 
 // 5. first visit
@@ -71,7 +71,7 @@ check("first visit: no since line", !first.includes("## Since your last visit"))
 // 6. empty project: placeholders, no empty headers
 const empty = renderBriefing(load("briefing-empty.json"), NOW);
 check("empty: status placeholder", empty.includes("You have not written a status yet"));
-check("empty: brief placeholder", empty.includes("No brief yet."));
+check("empty: description placeholder", empty.includes("No description yet."));
 check("empty: nothing open", empty.includes("Nothing open."));
 check("empty: no list headers", !/Documents \(|Interactions \(|Recordings \(|Events \(/.test(empty));
 check("empty: journal line", empty.includes("Journal: 0 entries, 0 pinned"));

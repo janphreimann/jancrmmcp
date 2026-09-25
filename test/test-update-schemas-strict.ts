@@ -1,6 +1,7 @@
-// The zone rule (spec §2.1): Claude must not be able to write `brief` or
-// the removed `ai_summary` through update_project. With .strict() an
-// unknown key is a validation error instead of being silently dropped.
+// The zone rule (spec §2.1): Claude must not be able to write `description`
+// (human-owned; propose_description) or the removed `brief`/`ai_summary`
+// through update_project. With .strict() an unknown key is a validation
+// error instead of being silently dropped.
 //
 // The schema alone is not the proof: server.tool(name, desc, schema.shape, cb)
 // makes the SDK rebuild a plain z.object(shape), which strips unknown keys and
@@ -29,6 +30,7 @@ function check(name: string, ok: boolean, detail?: string) {
 const id = "11111111-1111-4111-8111-111111111111";
 
 // ── Schema level ────────────────────────────────────────────────────────────
+check("schema: update_project rejects description", !updateProjectSchema.safeParse({ id, description: "x" }).success);
 check("schema: update_project rejects brief", !updateProjectSchema.safeParse({ id, brief: "x" }).success);
 check("schema: update_project rejects ai_summary", !updateProjectSchema.safeParse({ id, ai_summary: "x" }).success);
 check("schema: update_project accepts stage", updateProjectSchema.safeParse({ id, stage: "Active" }).success);
@@ -76,6 +78,7 @@ async function expectRejected(label: string, name: string, args: Record<string, 
   console.log(`       → ${r.text.replace(/\s+/g, " ").slice(0, 160)}`);
 }
 
+await expectRejected("update_project {id, description}", "update_project", { id, description: "x" }, "description");
 await expectRejected("update_project {id, brief}", "update_project", { id, brief: "x" }, "brief");
 await expectRejected("update_project {id, ai_summary}", "update_project", { id, ai_summary: "x" }, "ai_summary");
 await expectRejected("update_initiative {id, foo}", "update_initiative", { id, foo: 1 }, "foo");

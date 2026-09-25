@@ -15,11 +15,11 @@ export type TimelineRow = {
 
 export type Briefing = {
   project: {
-    id: string; name: string; stage: string; description: string;
+    id: string; name: string; stage: string;
+    description: string; description_updated_at: string | null; description_updated_by_name: string | null;
     health: "green" | "amber" | "red"; last_activity_at: string | null;
     start_date: string | null; expected_close_date: string | null; budget_amount: number | null;
     created_at: string; updated_at: string;
-    brief: string; brief_updated_at: string | null; brief_updated_by_name: string | null;
     agent_status: string; agent_status_updated_at: string | null;
     initiative: { id: string; name: string; description: string; status: string } | null;
   };
@@ -36,7 +36,7 @@ export type Briefing = {
     tasks_total: number;
     next_steps: { id: string; title: string; rationale: string; created_by_agent: boolean; created_at: string }[];
     unanswered_emails: { id: string; subject: string; from_name: string | null; from_address: string | null; received_at: string }[];
-    brief_proposals: { id: string; reason: string; created_at: string }[];
+    description_proposals: { id: string; reason: string; created_at: string }[];
     suggestion_counts: Partial<Record<"email" | "audio_recording" | "calendar_event", number>>;
   };
   index: {
@@ -55,7 +55,7 @@ export type Briefing = {
 };
 
 const DELTA_CAP = 30;
-const BRIEF_CAP = 6000;
+const DESCRIPTION_CAP = 6000;
 
 const HEALTH_LABEL: Record<Briefing["project"]["health"], string> = {
   green: "on track", amber: "no recent activity", red: "overdue",
@@ -141,7 +141,6 @@ export function renderBriefing(b: Briefing, now: Date): string {
   if (b.people.companies.length) line4.push(`Companies: ${b.people.companies.map((c) => c.name).join(", ")}`);
   if (line4.length) out.push(line4.join(" · "));
   if (b.tags.length) out.push(`Tags: ${b.tags.map((t) => t.name).join(", ")}`);
-  if (p.description.trim()) out.push(p.description.trim());
   if (p.initiative?.description.trim()) out.push(`Initiative: ${clip(p.initiative.description, 300)}`);
 
   // ── status (Claude's zone) ──
@@ -150,17 +149,17 @@ export function renderBriefing(b: Briefing, now: Date): string {
     ? p.agent_status.trim()
     : "You have not written a status yet. Write one with update_agent_status before you leave.");
 
-  // ── brief (human zone) ──
-  const briefBy = p.brief_updated_by_name ? ` by ${p.brief_updated_by_name}` : "";
-  out.push("", `## Brief (human-owned, ${p.brief_updated_at ? day(p.brief_updated_at) + briefBy : "never"})`);
-  if (p.brief.trim()) {
-    const t = p.brief.trim();
-    out.push(t.length > BRIEF_CAP ? t.slice(0, BRIEF_CAP) + "\n…(brief truncated — full text via get_project)" : t);
+  // ── description (human zone) ──
+  const descBy = p.description_updated_by_name ? ` by ${p.description_updated_by_name}` : "";
+  out.push("", `## Description (human-owned, ${p.description_updated_at ? day(p.description_updated_at) + descBy : "never"})`);
+  if (p.description.trim()) {
+    const t = p.description.trim();
+    out.push(t.length > DESCRIPTION_CAP ? t.slice(0, DESCRIPTION_CAP) + "\n…(description truncated — full text via get_project)" : t);
   } else {
-    out.push("No brief yet. If you learn durable facts, decisions or open questions, propose one with propose_brief.");
+    out.push("No description yet. If you learn durable facts, decisions or open questions, propose one with propose_description.");
   }
-  if (b.open.brief_proposals.length) {
-    out.push(`You have ${b.open.brief_proposals.length} open brief proposal(s) awaiting the user — do not propose the same thing again.`);
+  if (b.open.description_proposals.length) {
+    out.push(`You have ${b.open.description_proposals.length} open description proposal(s) awaiting the user — do not propose the same thing again.`);
   }
 
   // ── delta ──
@@ -260,7 +259,7 @@ export function renderBriefing(b: Briefing, now: Date): string {
   // ── tools ──
   out.push("", "## Tools");
   out.push("Drill down: get_document_content · get_interaction · get_audio_recording · get_email · list_project_timeline(project_id, before, kinds, limit)");
-  out.push("Write back: update_agent_status · log_project_activity · suggest_next_step · propose_brief · link_project_item · create_task · update_task · create_text_document");
+  out.push("Write back: update_agent_status · log_project_activity · suggest_next_step · propose_description · link_project_item · create_task · update_task · create_text_document");
   out.push(`project_id: ${p.id}`);
 
   return out.join("\n") + "\n";

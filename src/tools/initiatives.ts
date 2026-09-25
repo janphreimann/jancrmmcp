@@ -88,7 +88,7 @@ export const suggestNextStepSchema = z.object({
 
 /**
  * A structured, unconfirmed suggestion rather than free prose in the journal
- * or brief — the user reviews it in the CRM UI and either turns it into a
+ * or description — the user reviews it in the CRM UI and either turns it into a
  * real task or dismisses it. Check open_next_steps in get_project's response
  * first so you don't suggest something already decided.
  */

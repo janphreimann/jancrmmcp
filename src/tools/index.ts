@@ -70,7 +70,7 @@ import { openProjectSchema, openProject } from "./openProject.js";
 import {
   updateAgentStatusSchema, updateAgentStatus,
   logProjectActivitySchema, logProjectActivity,
-  proposeBriefSchema, proposeBrief,
+  proposeDescriptionSchema, proposeDescription,
   linkProjectItemSchema, linkProjectItem,
   listProjectTimelineSchema, listProjectTimeline,
 } from "./projectRoom.js";
@@ -151,7 +151,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "open_project",
-    "Open a project and get its briefing: current state (your status note and the human's brief, each with a date), everything that happened since you last opened it, what is open, and an index of every document, interaction, recording, event and pinned note with ids you can pass to the drill-down tools. Call this first whenever a request concerns a project. Before you finish working on the project: call update_agent_status if the state changed, and log_project_activity with a one-paragraph summary of what you did — that is how your next visit knows where you left off.",
+    "Open a project and get its briefing: current state (your status note and the human's project description, each with a date), everything that happened since you last opened it, what is open, and an index of every document, interaction, recording, event and pinned note with ids you can pass to the drill-down tools. Call this first whenever a request concerns a project. Before you finish working on the project: call update_agent_status if the state changed, and log_project_activity with a one-paragraph summary of what you did — that is how your next visit knows where you left off.",
     openProjectSchema.shape,
     async (args) => text(await openProject(ctx, args as Parameters<typeof openProject>[1]))
   );
@@ -171,10 +171,10 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
   );
 
   server.tool(
-    "propose_brief",
-    "Propose a new version of the human-owned project brief (full replacement text, markdown). The user sees a diff and applies or rejects it. You cannot edit the brief directly. Only one proposal can be open per project.",
-    proposeBriefSchema.shape,
-    async (args) => ok(await proposeBrief(ctx, args as Parameters<typeof proposeBrief>[1]))
+    "propose_description",
+    "Propose a new version of the human-owned project description (full replacement text, markdown). The user sees a diff and applies or rejects it. You cannot edit the description directly. Only one proposal can be open per project.",
+    proposeDescriptionSchema.shape,
+    async (args) => ok(await proposeDescription(ctx, args as Parameters<typeof proposeDescription>[1]))
   );
 
   server.tool(
@@ -228,12 +228,12 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   // registerTool with the full object schema, not server.tool(…, .shape): the
   // shape form makes the SDK rebuild a plain z.object(shape), which strips
-  // unknown keys — .strict() would be lost and `brief` silently dropped.
+  // unknown keys — .strict() would be lost and `description` silently dropped.
   server.registerTool(
     "update_project",
     {
       description:
-        "Update a project's fields — name, stage, description, budget, dates, initiative. For the status note use update_agent_status; for the brief use propose_brief.",
+        "Update a project's fields — name, stage, budget, dates, initiative. For the status note use update_agent_status; for the description use propose_description.",
       inputSchema: updateProjectSchema,
     },
     async (args) => ok(await updateProject(ctx, args as Parameters<typeof updateProject>[1]))

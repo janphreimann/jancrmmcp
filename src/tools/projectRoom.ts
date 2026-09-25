@@ -55,33 +55,33 @@ export async function logProjectActivity(ctx: Ctx, args: z.infer<typeof logProje
   return { id: data.id, message: "Session logged" };
 }
 
-// ── propose_brief ───────────────────────────────────────────────────────────
-export const proposeBriefSchema = z.object({
+// ── propose_description ─────────────────────────────────────────────────────
+export const proposeDescriptionSchema = z.object({
   project_id: z.string().uuid(),
-  proposed_brief: z.string().min(1).describe("The full replacement text of the brief (markdown), not a diff."),
-  reason: z.string().min(5).describe("One or two sentences: what changed and why the brief should say it."),
+  proposed_description: z.string().min(1).describe("The full replacement text of the description (markdown), not a diff."),
+  reason: z.string().min(5).describe("One or two sentences: what changed and why the description should say it."),
 });
 
-const OPEN_BRIEF_PROPOSAL_MESSAGE = "An open brief proposal already exists — wait for the user to resolve it.";
+const OPEN_DESCRIPTION_PROPOSAL_MESSAGE = "An open description proposal already exists — wait for the user to resolve it.";
 
-export async function proposeBrief(ctx: Ctx, args: z.infer<typeof proposeBriefSchema>) {
+export async function proposeDescription(ctx: Ctx, args: z.infer<typeof proposeDescriptionSchema>) {
   const { data: open, error: openErr } = await ctx.db
     .from("project_journal")
     .select("id")
     .eq("project_id", args.project_id)
-    .eq("entry_type", "brief_proposal")
+    .eq("entry_type", "description_proposal")
     .eq("metadata->>status", "open")
     .limit(1);
   if (openErr) throw new Error(openErr.message);
-  if (open?.length) throw new Error(OPEN_BRIEF_PROPOSAL_MESSAGE);
+  if (open?.length) throw new Error(OPEN_DESCRIPTION_PROPOSAL_MESSAGE);
 
   const { data, error } = await ctx.db
     .from("project_journal")
     .insert({
       project_id: args.project_id,
-      entry_type: "brief_proposal",
+      entry_type: "description_proposal",
       content: args.reason.trim(),
-      metadata: { proposed_brief: args.proposed_brief, reason: args.reason.trim(), status: "open" },
+      metadata: { proposed_description: args.proposed_description, reason: args.reason.trim(), status: "open" },
       is_system: true,
       created_by: ctx.userId,
     })
@@ -89,15 +89,15 @@ export async function proposeBrief(ctx: Ctx, args: z.infer<typeof proposeBriefSc
     .single();
   if (error) {
     // Race: another call passed the pre-check first and the partial unique
-    // index (project_journal_one_open_brief_proposal) caught this one.
-    if ((error as { code?: string }).code === "23505") throw new Error(OPEN_BRIEF_PROPOSAL_MESSAGE);
+    // index (project_journal_one_open_description_proposal) caught this one.
+    if ((error as { code?: string }).code === "23505") throw new Error(OPEN_DESCRIPTION_PROPOSAL_MESSAGE);
     // A project the caller can't see fails here too (RLS/insert trigger) —
     // same message as "not found" so this isn't an oracle for foreign ids.
     // Anything else is a genuine fault and must surface as such.
     if (isNotFoundError(error)) throw new Error(`Project ${args.project_id} not found`);
     throw new Error(error.message);
   }
-  return { id: data.id, message: "Brief proposal recorded — the user will apply or reject it" };
+  return { id: data.id, message: "Description proposal recorded — the user will apply or reject it" };
 }
 
 // ── link_project_item ───────────────────────────────────────────────────────
