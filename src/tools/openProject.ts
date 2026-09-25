@@ -68,6 +68,13 @@ export async function openProject(ctx: Ctx, args: z.infer<typeof openProjectSche
     throw new Error(stampErr.message);
   }
 
+  // Apply the project's mail rule first, so mails with the project's people
+  // that arrived since the last web visit are in the briefing. Best effort:
+  // on failure the briefing shows what was linked before — no reason to fail
+  // the open. Runs with the caller's token, so only their own mailbox counts.
+  const { error: refreshErr } = await ctx.db.rpc("refresh_project_suggestions", { p_project_id: projectId });
+  if (refreshErr) console.error("refresh_project_suggestions failed:", refreshErr.message);
+
   const { data: briefing, error } = await ctx.db.rpc("get_project_briefing", { p_project_id: projectId, p_since: since ?? null });
   if (error) throw new Error(error.message);
   if (!briefing) return "No project with that id (or you have no access).";
