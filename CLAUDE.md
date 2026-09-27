@@ -27,6 +27,15 @@ take effect. This bit us once: rotating the Supabase key locally and
 "redeploying" left the CRM webapp shipping a stale, now-dead legacy anon key
 until the Vercel-side env var was updated directly.
 
+`/mcp` accepts **only POST** — GET and DELETE get 405 (after bearer auth, so
+an expired token still yields 401 and triggers re-auth). The server is
+stateless and never pushes to the client, but the SDK transport would hold a
+GET SSE stream open with 15 s keepalives until Vercel's 300 s timeout; clients
+(Claude Code) then reconnect immediately. Every open client session thus kept
+a 2 GB instance alive around the clock and burned through the Hobby quota
+(362 GB-h Fluid Provisioned Memory against 3 h of actual CPU in Sep 2026).
+Don't route GET back to the transport.
+
 Interactions are intentionally **not** creatable via this server — logging a
 call/meeting/email as an interaction is a user-only action in the CRM UI.
 Do not add a `create_interaction` tool back without explicit sign-off.

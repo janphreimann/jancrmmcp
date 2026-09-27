@@ -30,6 +30,21 @@ app.all(
   "/mcp",
   requireBearerAuth({ verifier: oauthProvider }),
   async (req, res) => {
+    // Stateless: Der Server schickt nie von sich aus etwas an den Client. Ein
+    // GET-Stream würde auf Vercel nur bis zum 300-s-Timeout offen hängen, der
+    // Client verbindet sich neu, und die Instanz läuft dauerhaft (Fluid
+    // Provisioned Memory). 405 ist laut MCP-Spec erlaubt, Clients fallen dann
+    // auf reines POST zurück. Steht bewusst hinter requireBearerAuth, damit
+    // ein GET mit abgelaufenem Token weiterhin 401 und damit Re-Auth auslöst.
+    if (req.method !== "POST") {
+      res.set("Allow", "POST").status(405).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Method not allowed." },
+        id: null,
+      });
+      return;
+    }
+
     // Wer fragt, steht im Token — und nur daraus. Der Ctx trägt das
     // Supabase-Access-Token des Nutzers, ab hier greift die RLS des CRM.
     const extra = req.auth?.extra as { sub?: string; supabaseAccessToken?: string } | undefined;
