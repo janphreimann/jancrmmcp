@@ -77,7 +77,8 @@ check("empty: status placeholder", empty.includes("You have not written a status
 check("memory: section above status", md.indexOf("## Memory") >= 0 && md.indexOf("## Memory") < md.indexOf("## Status"));
 check("memory: project memory shown", md.includes("Sabine prefers calls over mail."));
 check("memory: no user memory in a project briefing", !md.includes("About the user"));
-check("empty: memory placeholder", empty.includes("## Memory") && empty.includes("Nothing yet."));
+check("empty: memory placeholder", empty.includes("## Memory") && empty.includes("Nothing yet. When the user tells you"));
+check("memory: no how-to once filled", !md.includes("save it with remember_for_project"));
 check("empty: description placeholder", empty.includes("No description yet."));
 check("empty: nothing open", empty.includes("Nothing open."));
 check("empty: no list headers", !/Documents \(|Interactions \(|Recordings \(|Events \(/.test(empty));

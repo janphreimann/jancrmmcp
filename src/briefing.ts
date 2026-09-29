@@ -149,8 +149,11 @@ export function renderBriefing(b: Briefing, now: Date): string {
   // through the MCP server instructions and the in-app chat context.
   // `?? ""`: an older database without the field must still render.
   out.push("", `## Memory (${p.agent_memory_updated_at ? day(p.agent_memory_updated_at) : "never written"})`);
-  out.push((p.agent_memory ?? "").trim() || "Nothing yet.");
-  out.push("", "What the user told any agent about this project. Keep it current: when the user tells you something about the project that should still hold next time — a constraint, a preference, a decision, a correction — save it with remember_for_project in the same turn, without being asked. Before update_agent_status, check it against what you read and fix what is outdated.");
+  // Only a placeholder carries a hint, like the status and description
+  // below: the how-to lives in the tool descriptions and the server
+  // instructions, and this text is shown to the user in the Agent tab too.
+  out.push((p.agent_memory ?? "").trim()
+    || "Nothing yet. When the user tells you something about this project that should still hold next time, save it with remember_for_project.");
 
   // ── status (Claude's zone) ──
   out.push("", `## Status (yours, ${p.agent_status_updated_at ? day(p.agent_status_updated_at) : "never written"})`);
