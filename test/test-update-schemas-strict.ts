@@ -32,6 +32,7 @@ const id = "11111111-1111-4111-8111-111111111111";
 // ── Schema level ────────────────────────────────────────────────────────────
 check("schema: update_project rejects description", !updateProjectSchema.safeParse({ id, description: "x" }).success);
 check("schema: update_project rejects brief", !updateProjectSchema.safeParse({ id, brief: "x" }).success);
+check("schema: update_project rejects agent_memory", !updateProjectSchema.safeParse({ id, agent_memory: "x" }).success);
 check("schema: update_project rejects ai_summary", !updateProjectSchema.safeParse({ id, ai_summary: "x" }).success);
 check("schema: update_project accepts stage", updateProjectSchema.safeParse({ id, stage: "Active" }).success);
 check("schema: update_project rejects deal-era stage", !updateProjectSchema.safeParse({ id, stage: "Identified" }).success);
@@ -80,6 +81,7 @@ async function expectRejected(label: string, name: string, args: Record<string, 
 
 await expectRejected("update_project {id, description}", "update_project", { id, description: "x" }, "description");
 await expectRejected("update_project {id, brief}", "update_project", { id, brief: "x" }, "brief");
+await expectRejected("update_project {id, agent_memory}", "update_project", { id, agent_memory: "x" }, "agent_memory");
 await expectRejected("update_project {id, ai_summary}", "update_project", { id, ai_summary: "x" }, "ai_summary");
 await expectRejected("update_initiative {id, foo}", "update_initiative", { id, foo: 1 }, "foo");
 

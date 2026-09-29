@@ -71,6 +71,13 @@ check("first visit: no since line", !first.includes("## Since your last visit"))
 // 6. empty project: placeholders, no empty headers
 const empty = renderBriefing(load("briefing-empty.json"), NOW);
 check("empty: status placeholder", empty.includes("You have not written a status yet"));
+// Memory: both halves, above the status, placeholders when empty — an
+// agent has to see the section even before anything is in it, or it never
+// learns that it is supposed to fill it.
+check("memory: section above status", md.indexOf("## Memory") >= 0 && md.indexOf("## Memory") < md.indexOf("## Status"));
+check("memory: project half shown", md.includes("Sabine prefers calls over mail."));
+check("memory: user half shown", md.includes("Only makes an offer once the client"));
+check("empty: memory placeholders", empty.includes("## Memory") && empty.split("Nothing yet.").length - 1 >= 2);
 check("empty: description placeholder", empty.includes("No description yet."));
 check("empty: nothing open", empty.includes("Nothing open."));
 check("empty: no list headers", !/Documents \(|Interactions \(|Recordings \(|Events \(/.test(empty));

@@ -21,12 +21,15 @@ export type Briefing = {
     start_date: string | null; expected_close_date: string | null; budget_amount: number | null;
     created_at: string; updated_at: string;
     agent_status: string; agent_status_updated_at: string | null;
+    agent_memory: string; agent_memory_updated_at: string | null;
     initiative: { id: string; name: string; description: string; status: string } | null;
   };
   people: {
     contacts: { id: string; name: string; email: string | null; company_name: string | null; is_main: boolean }[];
     companies: { id: string; name: string }[];
   };
+  // The caller's own, null until they told any agent something.
+  user_memory: { memory: string; updated_at: string | null } | null;
   tags: { id: string; name: string; color: string | null }[];
   since: string | null;
   delta: TimelineRow[];
@@ -142,6 +145,17 @@ export function renderBriefing(b: Briefing, now: Date): string {
   if (line4.length) out.push(line4.join(" · "));
   if (b.tags.length) out.push(`Tags: ${b.tags.map((t) => t.name).join(", ")}`);
   if (p.initiative?.description.trim()) out.push(`Initiative: ${clip(p.initiative.description, 300)}`);
+
+  // ── memory (what the user told any agent; kept current by the agents) ──
+  // `?? ""` / `?.`: an older database without these fields (the app ships
+  // separately from the migration) must still render, not blank the tab.
+  const um = b.user_memory;
+  out.push("", "## Memory");
+  out.push(`This project (${p.agent_memory_updated_at ? day(p.agent_memory_updated_at) : "never written"}):`);
+  out.push((p.agent_memory ?? "").trim() || "Nothing yet.");
+  out.push("", `About the user, for every project (${um?.updated_at ? day(um.updated_at) : "never written"}):`);
+  out.push((um?.memory ?? "").trim() || "Nothing yet.");
+  out.push("", "Keep this current. When the user tells you something that should still hold next time — a constraint, a preference, a decision, a correction — save it in the same turn, without being asked: remember_for_project for this project, remember_about_user for what holds beyond it. Before update_agent_status, check the project half against what you read and fix what is outdated.");
 
   // ── status (Claude's zone) ──
   out.push("", `## Status (yours, ${p.agent_status_updated_at ? day(p.agent_status_updated_at) : "never written"})`);
@@ -259,7 +273,7 @@ export function renderBriefing(b: Briefing, now: Date): string {
   // ── tools ──
   out.push("", "## Tools");
   out.push("Drill down: get_document_content · get_interaction · get_audio_recording · get_email · list_project_timeline(project_id, before, kinds, limit)");
-  out.push("Write back: update_agent_status · log_project_activity · suggest_next_step · propose_description · link_project_item · create_task · update_task · create_text_document");
+  out.push("Write back: remember_for_project · remember_about_user · update_agent_status · log_project_activity · suggest_next_step · propose_description · link_project_item · create_task · update_task · create_text_document");
   out.push(`project_id: ${p.id}`);
 
   return out.join("\n") + "\n";

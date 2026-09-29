@@ -23,6 +23,33 @@ export async function updateAgentStatus(ctx: Ctx, args: z.infer<typeof updateAge
   return { id: args.project_id, message: "Status updated" };
 }
 
+// ── remember_for_project ────────────────────────────────────────────────────
+// Claude's second zone next to agent_status: not where the project stands
+// (that changes every session) but what the user told Claude about it —
+// constraints, preferences, corrections. Kept apart from the status so a
+// status rewrite can never drop an instruction, and apart from the
+// human-owned description so Claude can write it without a proposal.
+export const rememberForProjectSchema = z.object({
+  project_id: z.string().uuid(),
+  memory: z.string().max(4000).describe(
+    "The FULL replacement for this project's memory — not an append. Short bullet points of what the user told you " +
+    "that still holds: constraints, preferences, decisions, corrections of your own mistakes. Drop what no longer " +
+    "applies. Empty string clears it."
+  ),
+});
+
+export async function rememberForProject(ctx: Ctx, args: z.infer<typeof rememberForProjectSchema>) {
+  const memory = args.memory.trim();
+  const { data, error } = await ctx.db
+    .from("projects")
+    .update({ agent_memory: memory, agent_memory_updated_at: new Date().toISOString() })
+    .eq("id", args.project_id)
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error(`Project ${args.project_id} not found`);
+  return { id: args.project_id, message: "Project memory saved", length: memory.length };
+}
+
 // ── log_project_activity ────────────────────────────────────────────────────
 // project_journal has no created_by_agent/agent_approved columns (it's a
 // system log, not an entity table with an AgentBadge) — no agentMeta() here.

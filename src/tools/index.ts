@@ -59,7 +59,10 @@ import {
   searchAudioRecordingsSchema, searchAudioRecordings,
   getAudioRecordingSchema, getAudioRecording,
 } from "./audioRecordings.js";
-import { updateAgentProfileSchema, updateAgentProfile, rememberSchema, remember } from "./selfManagement.js";
+import {
+  updateAgentProfileSchema, updateAgentProfile, rememberSchema, remember,
+  rememberAboutUserSchema, rememberAboutUser,
+} from "./selfManagement.js";
 import { readChatHistorySchema, readChatHistory } from "./chatHistory.js";
 import {
   scheduleRoutineSchema, scheduleRoutine,
@@ -69,6 +72,7 @@ import {
 import { openProjectSchema, openProject } from "./openProject.js";
 import {
   updateAgentStatusSchema, updateAgentStatus,
+  rememberForProjectSchema, rememberForProject,
   logProjectActivitySchema, logProjectActivity,
   proposeDescriptionSchema, proposeDescription,
   linkProjectItemSchema, linkProjectItem,
@@ -151,16 +155,30 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "open_project",
-    "Open a project and get its briefing: current state (your status note and the human's project description, each with a date), everything that happened since you last opened it, what is open, and an index of every document, interaction, recording, event and pinned note with ids you can pass to the drill-down tools. Call this first whenever a request concerns a project. Before you finish working on the project: call update_agent_status if the state changed, and log_project_activity with a one-paragraph summary of what you did — that is how your next visit knows where you left off.",
+    "Open a project and get its briefing: current state (your status note and the human's project description, each with a date), what the user has told any agent before (Memory: this project, and the user in general), everything that happened since you last opened it, what is open, and an index of every document, interaction, recording, event and pinned note with ids you can pass to the drill-down tools. Call this first whenever a request concerns a project. Whenever the user tells you something that should still hold next time — a constraint, a preference, a decision, a correction of something you got wrong — save it in the same turn, without being asked: remember_for_project for this project, remember_about_user for what holds beyond it. Before you finish working on the project: call update_agent_status if the state changed, and log_project_activity with a one-paragraph summary of what you did — that is how your next visit knows where you left off.",
     openProjectSchema.shape,
     async (args) => text(await openProject(ctx, args as Parameters<typeof openProject>[1]))
   );
 
   server.tool(
     "update_agent_status",
-    "Your own status note for a project (3–8 sentences: where it stands, what happened last, what is next or blocking). Replaces the previous one. No headings. Write it at the end of a session in which the state changed.",
+    "Your own status note for a project (3–8 sentences: where it stands, what happened last, what is next or blocking). Replaces the previous one. No headings. Write it at the end of a session in which the state changed. Before you write it, go through the project's Memory in the briefing: if anything there is outdated, done or contradicted by what you just read, fix it with remember_for_project first.",
     updateAgentStatusSchema.shape,
     async (args) => ok(await updateAgentStatus(ctx, args as Parameters<typeof updateAgentStatus>[1]))
+  );
+
+  server.tool(
+    "remember_about_user",
+    "Memory about the user that holds beyond one project — how they work, rules they gave you, preferences, corrections of your mistakes (\"I only make an offer once the client has said what they want\"). Every agent sees it: it is shown under Memory in every project briefing and in every in-app chat. Check after every user message whether it contains something like that, and if so save it right away, in the same turn, without being asked and without announcing it. Full replacement, not an append: start from the current text (in the briefing), keep what still holds, drop what is outdated. Something that concerns only one project goes to remember_for_project instead.",
+    rememberAboutUserSchema.shape,
+    async (args) => ok(await rememberAboutUser(ctx, args as Parameters<typeof rememberAboutUser>[1]))
+  );
+
+  server.tool(
+    "remember_for_project",
+    "The project's memory: what the user told you about this project that should still hold next time (constraints, preferences, decisions, corrections of your mistakes). Every agent that opens the project sees it under Memory at the top of the briefing. Check after every user message whether it contains something like that, and if so save it right away, in the same turn, without being asked and without announcing it — don't wait for \"remember this\". Full replacement, not an append: start from the current text, keep what still holds, drop what is outdated, don't duplicate. Something that holds for the user beyond this project goes to remember_about_user instead. Not for the project's state — that is update_agent_status.",
+    rememberForProjectSchema.shape,
+    async (args) => ok(await rememberForProject(ctx, args as Parameters<typeof rememberForProject>[1]))
   );
 
   server.tool(
@@ -458,7 +476,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "remember",
-    "Overwrite your own memory document — the durable summary of your job and what you know, re-read on every message.",
+    "Overwrite your own memory document — the durable summary of your job and the working patterns you've learned for it, re-read on every message. Only you see it: anything the user tells you about themselves goes to remember_about_user, anything about one project to remember_for_project.",
     rememberSchema.shape,
     async (args) => ok(await remember(ctx, args as Parameters<typeof remember>[1]))
   );
