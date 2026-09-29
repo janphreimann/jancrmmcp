@@ -7,6 +7,7 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { oauthProvider, handleDevicePoll } from "./oauth.js";
 import { buildContext } from "./context.js";
 import { registerAllTools } from "./tools/index.js";
+import { isInitialize, loadInstructions } from "./instructions.js";
 import { ISSUER_URL } from "./issuer.js";
 
 const app = express();
@@ -64,7 +65,8 @@ app.all(
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
     });
-    const server = new McpServer({ name: "crm-mcp-server", version: "1.0.0" });
+    const instructions = isInitialize(req.body) ? await loadInstructions(ctx) : undefined;
+    const server = new McpServer({ name: "crm-mcp-server", version: "1.0.0" }, instructions ? { instructions } : undefined);
     registerAllTools(server, ctx);
 
     transport.onclose = () => server.close().catch(() => {});

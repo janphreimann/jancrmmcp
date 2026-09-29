@@ -67,8 +67,10 @@ export async function remember(ctx: Ctx, args: z.infer<typeof rememberSchema>) {
 // What holds for the calling user across every project and every agent —
 // how they work, rules they gave, preferences. Keyed to the user, not to an
 // agent: agents.memory is seen by that one agent only, so a rule told to the
-// CRM Assistant was unknown to Claude on claude.ai. Shown in every project
-// briefing under "Memory" and in every in-app chat turn. The row is the
+// CRM Assistant was unknown to Claude on claude.ai. Reaches every agent at
+// the start: the MCP server instructions (instructions.ts) and every in-app
+// chat turn. Deliberately not in the project briefing — it is not about a
+// project. The user reads and edits it in Settings → Prompts → About me. The row is the
 // caller's own (RLS user_id = auth.uid()), never anyone else's.
 export const rememberAboutUserSchema = z.object({
   memory: z.string().max(4000).describe(
@@ -80,9 +82,12 @@ export const rememberAboutUserSchema = z.object({
 
 export async function rememberAboutUser(ctx: Ctx, args: z.infer<typeof rememberAboutUserSchema>) {
   const memory = args.memory.trim();
+  // The previous text goes back in the result: a client that never showed
+  // the server instructions overwrites blind, and can repair it right away.
+  const { data: before } = await ctx.db.from("user_agent_memory").select("memory").eq("user_id", ctx.userId).maybeSingle();
   const { error } = await ctx.db
     .from("user_agent_memory")
     .upsert({ user_id: ctx.userId, memory, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
   if (error) throw new Error(`Could not save memory: ${error.message}`);
-  return { success: true, length: memory.length };
+  return { success: true, length: memory.length, previous: before?.memory ?? "" };
 }
