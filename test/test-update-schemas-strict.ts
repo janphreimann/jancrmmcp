@@ -18,6 +18,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { updateProjectSchema } from "../src/tools/projects.js";
 import { updateInitiativeSchema } from "../src/tools/initiatives.js";
+import { createNoteSchema, updateNoteSchema } from "../src/tools/notes.js";
 import { registerAllTools } from "../src/tools/index.js";
 import type { Ctx } from "../src/context.js";
 
@@ -37,6 +38,14 @@ check("schema: update_project rejects ai_summary", !updateProjectSchema.safePars
 check("schema: update_project accepts stage", updateProjectSchema.safeParse({ id, stage: "Active" }).success);
 check("schema: update_project rejects deal-era stage", !updateProjectSchema.safeParse({ id, stage: "Identified" }).success);
 check("schema: update_initiative rejects unknown key", !updateInitiativeSchema.safeParse({ id, foo: 1 }).success);
+// Notes: a misspelled link key (contacts instead of contact_ids) must fail
+// loudly, not create a note without the link the caller asked for.
+check("schema: create_note rejects unknown key", !createNoteSchema.safeParse({ content: "x", contacts: [id] }).success);
+check("schema: create_note rejects organization_id", !createNoteSchema.safeParse({ content: "x", organization_id: id }).success);
+check("schema: create_note accepts links", createNoteSchema.safeParse({ content: "x", tag_ids: [id], project_ids: [id] }).success);
+check("schema: update_note rejects created_by_agent", !updateNoteSchema.safeParse({ id, created_by_agent: false }).success);
+check("schema: update_note rejects unknown link key", !updateNoteSchema.safeParse({ id, link: { contacts: [id] } }).success);
+check("schema: update_note accepts link/unlink", updateNoteSchema.safeParse({ id, link: { tag_ids: [id] }, unlink: { contact_ids: [id] } }).success);
 
 // ── Tool boundary (the path the SDK actually takes) ─────────────────────────
 // A stub db that records every update payload. A rejected call must never
@@ -84,6 +93,7 @@ await expectRejected("update_project {id, brief}", "update_project", { id, brief
 await expectRejected("update_project {id, agent_memory}", "update_project", { id, agent_memory: "x" }, "agent_memory");
 await expectRejected("update_project {id, ai_summary}", "update_project", { id, ai_summary: "x" }, "ai_summary");
 await expectRejected("update_initiative {id, foo}", "update_initiative", { id, foo: 1 }, "foo");
+await expectRejected("update_note {id, agent_approved}", "update_note", { id, agent_approved: true }, "agent_approved");
 
 const okCall = await call("update_project", { id, stage: "Active" });
 check("tool: update_project {id, stage} succeeds", !okCall.isError, okCall.text);

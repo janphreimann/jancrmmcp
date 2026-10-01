@@ -1,7 +1,7 @@
 # crm-mcp-server
 
 MCP server exposing CRM tools (contacts, companies, projects, tasks, calendar
-events, documents, folders) to AI agents (Claude, claude.ai connector) backed
+events, documents, folders, notes) to AI agents (Claude, claude.ai connector) backed
 by the same Supabase project as the main CRM webapp (`../janreimanncrm`).
 
 Calendar events are special: they live on an external CalDAV server, and the
@@ -48,7 +48,7 @@ approval before it's treated as fully trusted data.
 
 This is implemented with two columns, present on every entity table
 (`contacts`, `companies`, `projects`, `tasks`, `interactions`, `documents`,
-`document_folders`, `calendar_events`):
+`document_folders`, `calendar_events`, `notes`):
 
 - `created_by_agent boolean not null default false`
 - `agent_approved boolean not null default false`

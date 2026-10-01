@@ -55,6 +55,13 @@ import {
   deleteDocumentSchema, deleteDocument,
 } from "./documents.js";
 import {
+  listNoteFoldersSchema, listNoteFolders,
+  searchNotesSchema, searchNotes,
+  getNoteSchema, getNote,
+  createNoteSchema, createNote,
+  updateNoteSchema, updateNote,
+} from "./notes.js";
+import {
   updateAudioRecordingTranscriptSchema, updateAudioRecordingTranscript,
   searchAudioRecordingsSchema, searchAudioRecordings,
   getAudioRecordingSchema, getAudioRecording,
@@ -463,6 +470,48 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Soft-delete a document (moves it to trash, recoverable from the CRM UI)",
     deleteDocumentSchema.shape,
     async (args) => ok(await deleteDocument(ctx, args as Parameters<typeof deleteDocument>[1]))
+  );
+
+  // ─── Notes ───────────────────────────────────────────────────────────────
+
+  server.tool(
+    "list_note_folders",
+    "List the folders of the Notes library (flat list with parent_folder_id for hierarchy). Separate from document folders.",
+    listNoteFoldersSchema.shape,
+    async () => ok(await listNoteFolders(ctx))
+  );
+
+  server.tool(
+    "search_notes",
+    "Search notes in the Notes library by text, folder, tag, pinned state, or linked contact/company/project. Returns a preview; read the full note with get_note.",
+    searchNotesSchema.shape,
+    async (args) => ok(await searchNotes(ctx, args as Parameters<typeof searchNotes>[1]))
+  );
+
+  server.tool(
+    "get_note",
+    "Full note: markdown content, folder, pinned state, tags and linked contacts, companies and projects",
+    getNoteSchema.shape,
+    async (args) => ok(await getNote(ctx, args as Parameters<typeof getNote>[1]))
+  );
+
+  // registerTool with the full schema so .strict() survives (see update_project).
+  server.registerTool(
+    "create_note",
+    {
+      description: "Create a note in the Notes library (markdown). File it into a note folder (list_note_folders), tag it (list_tags) and link the contacts, companies and projects it is about — all in one call. For files or long documents use create_text_document instead.",
+      inputSchema: createNoteSchema,
+    },
+    async (args) => ok(await createNote(ctx, args as Parameters<typeof createNote>[1]))
+  );
+
+  server.registerTool(
+    "update_note",
+    {
+      description: "Edit a note: title, content (replaces the whole body), folder, pinned, and add (link) or remove (unlink) tags, contacts, companies and projects. Links you don't name stay as they are.",
+      inputSchema: updateNoteSchema,
+    },
+    async (args) => ok(await updateNote(ctx, args as Parameters<typeof updateNote>[1]))
   );
 
   // ─── Self-management ─────────────────────────────────────────────────────
