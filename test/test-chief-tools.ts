@@ -8,6 +8,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { registerAllTools } from "../src/tools/index.js";
 import type { Ctx } from "../src/context.js";
+import {
+  workerTools, createStandingOrderSchema, updateStandingOrderSchema, createProposalSchema, updateProposalStatusSchema,
+} from "../src/tools/chief.js";
 
 let failed = 0;
 function check(name: string, ok: boolean, detail?: string) {
@@ -153,6 +156,74 @@ check("delegate warns that a system agent's thread is visible to the whole organ
   /visible to the whole organization/.test(delegateDescription)
   && /never put the user's private mail content or personal details into a task for a system agent/.test(delegateDescription)
   && /one of the user's own agents/.test(delegateDescription), delegateDescription);
+
+// ── Standing orders and proposals ─────────────────────────────────────────
+const SO = "66666666-6666-4666-8666-666666666666";
+const PR = "77777777-7777-4777-8777-777777777777";
+const PJ = "88888888-8888-4888-8888-888888888888";
+for (const n of ["create_standing_order", "update_standing_order", "create_proposal", "update_proposal_status"]) {
+  check(`${n} is registered`, names.includes(n));
+}
+check("create_standing_order schema is strict", !createStandingOrderSchema.safeParse({ agent_id: CHIEF, instruction: "x", extra: 1 }).success);
+check("update_standing_order schema is strict", !updateStandingOrderSchema.safeParse({ agent_id: CHIEF, standing_order_id: SO, enabled: true, extra: 1 }).success);
+check("create_proposal schema is strict", !createProposalSchema.safeParse({ agent_id: CHIEF, title: "t", body: "b", extra: 1 }).success);
+check("update_proposal_status schema is strict", !updateProposalStatusSchema.safeParse({ agent_id: CHIEF, proposal_id: PR, status: "done", outcome: "ok", extra: 1 }).success);
+for (const status of ["accepted", "rejected", "open"]) {
+  check(`update_proposal_status rejects status ${status}`, !updateProposalStatusSchema.safeParse({ agent_id: CHIEF, proposal_id: PR, status, outcome: "ok" }).success);
+}
+check("update_proposal_status accepts done with an outcome", updateProposalStatusSchema.safeParse({ agent_id: CHIEF, proposal_id: PR, status: "done", outcome: "ok" }).success);
+check("update_proposal_status rejects an empty outcome", !updateProposalStatusSchema.safeParse({ agent_id: CHIEF, proposal_id: PR, status: "done", outcome: "  " }).success);
+check("update_standing_order needs something to change", !updateStandingOrderSchema.safeParse({ agent_id: CHIEF, standing_order_id: SO }).success);
+check("update_standing_order accepts project_id null alone", updateStandingOrderSchema.safeParse({ agent_id: CHIEF, standing_order_id: SO, project_id: null }).success);
+
+const nonChief: Array<[string, Record<string, unknown>]> = [
+  ["create_standing_order", { agent_id: OWN, instruction: "Watch Acme" }],
+  ["update_standing_order", { agent_id: OWN, standing_order_id: SO, enabled: false }],
+  ["create_proposal", { agent_id: OWN, title: "t", body: "b" }],
+  ["update_proposal_status", { agent_id: OWN, proposal_id: PR, status: "done", outcome: "ok" }],
+];
+for (const [tool, args] of nonChief) {
+  r = await call(tool, args);
+  check(`${tool} refuses a non-Chief caller and never calls rpc`, r.isError && /Only your Chief/.test(r.text) && rpcs.length === 0, r.text);
+}
+
+rpcResult = { data: SO, error: null };
+r = await call("create_standing_order", { agent_id: CHIEF, instruction: "Watch Acme" });
+check("create_standing_order calls the rpc with a null project", !r.isError && rpcs[0]?.fn === "create_standing_order"
+  && JSON.stringify(rpcs[0].args) === JSON.stringify({ p_instruction: "Watch Acme", p_project_id: null }) && r.text.includes(SO), r.text);
+
+rpcResult = { data: null, error: null };
+r = await call("update_standing_order", { agent_id: CHIEF, standing_order_id: SO, project_id: null });
+check("update_standing_order with project_id null clears the project", !r.isError && rpcs[0]?.fn === "update_standing_order"
+  && rpcs[0].args.p_clear_project === true && rpcs[0].args.p_project_id === null && rpcs[0].args.p_id === SO, r.text);
+r = await call("update_standing_order", { agent_id: CHIEF, standing_order_id: SO, project_id: PJ, enabled: false });
+check("update_standing_order with a project does not clear it", !r.isError
+  && rpcs[0].args.p_clear_project === false && rpcs[0].args.p_project_id === PJ && rpcs[0].args.p_enabled === false, r.text);
+r = await call("update_standing_order", { agent_id: CHIEF, standing_order_id: SO });
+check("update_standing_order with nothing to change is refused", r.isError && rpcs.length === 0, r.text);
+
+rpcResult = { data: PR, error: null };
+r = await call("create_proposal", { agent_id: CHIEF, title: "Send follow-up", body: "Why and what", project_id: PJ });
+check("create_proposal calls create_chief_proposal", !r.isError && rpcs[0]?.fn === "create_chief_proposal"
+  && rpcs[0].args.p_title === "Send follow-up" && rpcs[0].args.p_project_id === PJ && rpcs[0].args.p_standing_order_id === null
+  && r.text.includes(PR), r.text);
+
+rpcResult = { data: true, error: null };
+r = await call("update_proposal_status", { agent_id: CHIEF, proposal_id: PR, status: "done", outcome: "Sent" });
+check("update_proposal_status calls complete_chief_proposal", !r.isError && rpcs[0]?.fn === "complete_chief_proposal"
+  && JSON.stringify(rpcs[0].args) === JSON.stringify({ p_id: PR, p_outcome: "Sent" }), r.text);
+rpcResult = { data: false, error: null };
+r = await call("update_proposal_status", { agent_id: CHIEF, proposal_id: PR, status: "done", outcome: "Sent" });
+check("update_proposal_status reports a proposal that is not accepted", r.isError && /not accepted \(or already done\)/.test(r.text), r.text);
+
+let threw = false;
+try { workerTools([`${P}create_proposal`]); } catch { threw = true; }
+check("create_proposal is manager-only", threw);
+for (const n of ["create_standing_order", "update_standing_order", "update_proposal_status"]) {
+  threw = false;
+  try { workerTools([P + n]); } catch { threw = true; }
+  check(`${n} is manager-only`, threw);
+}
 
 await client.close();
 if (failed) { console.error(`${failed} check(s) failed`); process.exit(1); }

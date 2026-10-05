@@ -23,7 +23,8 @@ export async function getOverview(ctx: Ctx, _args: z.infer<typeof getOverviewSch
 const CRM_PREFIX = "mcp__jan-crm__";
 // Never handed to an agent the Chief creates: the manager's own tools.
 const MANAGER_ONLY = new Set(
-  ["get_overview", "delegate", "create_agent", "update_agent", "pause_agent", "delete_agent", "update_agent_profile"]
+  ["get_overview", "delegate", "create_agent", "update_agent", "pause_agent", "delete_agent", "update_agent_profile",
+    "create_standing_order", "update_standing_order", "create_proposal", "update_proposal_status"]
     .map((n) => CRM_PREFIX + n)
 );
 const MAX_MANAGED_AGENTS = 20;
@@ -212,4 +213,85 @@ export async function delegate(ctx: Ctx, args: z.infer<typeof delegateSchema>) {
     status: "open",
     note: "The desktop app runs it now. The result comes back as a new message in your thread (\"Result from …\") — don't wait or poll; finish your turn.",
   };
+}
+
+// ── Standing orders and proposals (spec §3.4, §4.5) ───────────────────────
+// Chief only, like the manager tools above. Every limit lives in the RPCs
+// (CRM migration 20261107000500_chief_standing_orders.sql). There is
+// deliberately no tool to accept or reject a proposal: that is the user's
+// click in the app, and nothing the Chief reads can make it happen.
+
+export const createStandingOrderSchema = z.object({
+  agent_id: z.string().uuid().describe("Your own (the Chief's) agent id"),
+  instruction: z.string().trim().min(1).max(2000).describe("What to watch for and what to do, in the user's own words"),
+  project_id: z.string().uuid().optional().describe("Only for this project; omit for all projects"),
+}).strict();
+
+export async function createStandingOrder(ctx: Ctx, args: z.infer<typeof createStandingOrderSchema>) {
+  await loadCallerChief(ctx, args.agent_id);
+  const { data, error } = await ctx.db.rpc("create_standing_order", {
+    p_instruction: args.instruction,
+    p_project_id: args.project_id ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return { success: true, standing_order_id: data, note: "The desktop app wakes you when something changes that may concern it." };
+}
+
+export const updateStandingOrderSchema = z.object({
+  agent_id: z.string().uuid().describe("Your own (the Chief's) agent id"),
+  standing_order_id: z.string().uuid(),
+  instruction: z.string().trim().min(1).max(2000).optional(),
+  enabled: z.boolean().optional().describe("false switches it off without deleting it"),
+  project_id: z.string().uuid().nullable().optional().describe("A project id, or null for all projects"),
+}).strict().refine(
+  (a) => a.instruction !== undefined || a.enabled !== undefined || a.project_id !== undefined,
+  { message: "Nothing to update — pass instruction, enabled or project_id." }
+);
+
+export async function updateStandingOrder(ctx: Ctx, args: z.infer<typeof updateStandingOrderSchema>) {
+  await loadCallerChief(ctx, args.agent_id);
+  const { error } = await ctx.db.rpc("update_standing_order", {
+    p_id: args.standing_order_id,
+    p_instruction: args.instruction ?? null,
+    p_enabled: args.enabled ?? null,
+    p_project_id: args.project_id ?? null,
+    p_clear_project: args.project_id === null,
+  });
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
+export const createProposalSchema = z.object({
+  agent_id: z.string().uuid().describe("Your own (the Chief's) agent id"),
+  title: z.string().trim().min(1).max(200).describe("What you propose, as one line"),
+  body: z.string().max(8000).describe("Markdown: why, and exactly what you will do if the user accepts — every step, record and id"),
+  project_id: z.string().uuid().optional(),
+  standing_order_id: z.string().uuid().optional().describe("The standing order that led to it"),
+}).strict();
+
+export async function createProposal(ctx: Ctx, args: z.infer<typeof createProposalSchema>) {
+  await loadCallerChief(ctx, args.agent_id);
+  const { data, error } = await ctx.db.rpc("create_chief_proposal", {
+    p_title: args.title,
+    p_body: args.body,
+    p_project_id: args.project_id ?? null,
+    p_standing_order_id: args.standing_order_id ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return { success: true, proposal_id: data, status: "open", note: "The user accepts or rejects it in the app. Do not carry it out before you are told it was accepted." };
+}
+
+export const updateProposalStatusSchema = z.object({
+  agent_id: z.string().uuid().describe("Your own (the Chief's) agent id"),
+  proposal_id: z.string().uuid(),
+  status: z.literal("done").describe("The only status you set: an accepted proposal you have carried out"),
+  outcome: z.string().trim().min(1).max(2000).describe("One or two lines: what you did (or what stopped you)"),
+}).strict();
+
+export async function updateProposalStatus(ctx: Ctx, args: z.infer<typeof updateProposalStatusSchema>) {
+  await loadCallerChief(ctx, args.agent_id);
+  const { data, error } = await ctx.db.rpc("complete_chief_proposal", { p_id: args.proposal_id, p_outcome: args.outcome });
+  if (error) throw new Error(error.message);
+  if (data !== true) throw new Error("This proposal is not accepted (or already done) — only an accepted proposal can be marked done.");
+  return { success: true, status: "done" };
 }

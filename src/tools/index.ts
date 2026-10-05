@@ -76,6 +76,8 @@ import {
   createAgentSchema, createAgent, updateAgentSchema, updateAgent,
   pauseAgentSchema, pauseAgent, deleteAgentSchema, deleteAgent,
   delegateSchema, delegate,
+  createStandingOrderSchema, createStandingOrder, updateStandingOrderSchema, updateStandingOrder,
+  createProposalSchema, createProposal, updateProposalStatusSchema, updateProposalStatus,
 } from "./chief.js";
 import {
   scheduleRoutineSchema, scheduleRoutine,
@@ -575,6 +577,26 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "delete_agent",
     { description: "Chief only: remove an agent you created (soft delete — restorable). Agents the user built and system agents cannot be deleted by you.", inputSchema: deleteAgentSchema },
     async (args) => ok(await deleteAgent(ctx, args as Parameters<typeof deleteAgent>[1]))
+  );
+  server.registerTool(
+    "create_standing_order",
+    { description: "Chief only: save something the user wants you to keep watching (\"whenever …\"). The desktop app then wakes you in batches when something changes that may concern it (at most 40 autonomous turns a day). Instruction in the user's words; project_id when it concerns one project.", inputSchema: createStandingOrderSchema },
+    async (args) => ok(await createStandingOrder(ctx, args as Parameters<typeof createStandingOrder>[1]))
+  );
+  server.registerTool(
+    "update_standing_order",
+    { description: "Chief only: change a standing order's instruction or project, or switch it off (enabled=false) / on again.", inputSchema: updateStandingOrderSchema },
+    async (args) => ok(await updateStandingOrder(ctx, args as Parameters<typeof updateStandingOrder>[1]))
+  );
+  server.registerTool(
+    "create_proposal",
+    { description: "Chief only: propose a step to the user (a card with Accept / Reject in the app). Say exactly what you will do if accepted. Never carry it out yourself before you get the message that the user accepted it.", inputSchema: createProposalSchema },
+    async (args) => ok(await createProposal(ctx, args as Parameters<typeof createProposal>[1]))
+  );
+  server.registerTool(
+    "update_proposal_status",
+    { description: "Chief only: mark an accepted proposal done once you have carried it out, with a one-line outcome. Accepting and rejecting are the user's — there is no way to do that from here.", inputSchema: updateProposalStatusSchema },
+    async (args) => ok(await updateProposalStatus(ctx, args as Parameters<typeof updateProposalStatus>[1]))
   );
 
   // ─── Routines ────────────────────────────────────────────────────────────
