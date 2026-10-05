@@ -148,6 +148,12 @@ r = await call("read_chat_history", { agent_id: "55555555-5555-4555-8555-5555555
 check("read_chat_history: an invisible agent is 'not found' and the RPC is not called",
   r.isError && /not found/.test(r.text) && rpcs.length === 0, r.text);
 
+const delegateDescription = (await client.listTools()).tools.find((t) => t.name === "delegate")?.description ?? "";
+check("delegate warns that a system agent's thread is visible to the whole organization",
+  /visible to the whole organization/.test(delegateDescription)
+  && /never put the user's private mail content or personal details into a task for a system agent/.test(delegateDescription)
+  && /one of the user's own agents/.test(delegateDescription), delegateDescription);
+
 await client.close();
 if (failed) { console.error(`${failed} check(s) failed`); process.exit(1); }
 console.log("all checks passed");
