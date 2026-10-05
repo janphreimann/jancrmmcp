@@ -71,6 +71,7 @@ import {
   rememberAboutUserSchema, rememberAboutUser,
 } from "./selfManagement.js";
 import { readChatHistorySchema, readChatHistory } from "./chatHistory.js";
+import { getOverviewSchema, getOverview } from "./chief.js";
 import {
   scheduleRoutineSchema, scheduleRoutine,
   updateRoutineSchema, updateRoutine,
@@ -535,6 +536,13 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Page back through or search your own chat thread beyond the recent messages in your context window. Use it whenever something refers to earlier conversation you can't see, instead of guessing.",
     readChatHistorySchema.shape,
     async (args) => ok(await readChatHistory(ctx, args as Parameters<typeof readChatHistory>[1]))
+  );
+
+  server.tool(
+    "get_overview",
+    "The big picture: every agent you can see (job, routines, last run, paused), the runs of the last 48 hours, the projects with the most recent activity (with their status note) and the open/overdue task counts. Call it whenever a question is about what is going on overall, or before handing work to another agent.",
+    getOverviewSchema.shape,
+    async (args) => ok(await getOverview(ctx, args as Parameters<typeof getOverview>[1]))
   );
 
   // ─── Routines ────────────────────────────────────────────────────────────
