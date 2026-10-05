@@ -20,6 +20,8 @@ export const INTERACTION_TYPES: [string, ...string[]] = [
   "Phone Call",
   "Meeting",
   "Video Call",
+  "WhatsApp",
+  "Message",
   "Email Inbound",
   "Email Outbound",
   "Conference",

@@ -250,6 +250,8 @@ const REF_KIND: Record<(typeof KINDS)[number], string> = {
   email: "email", audio_recording: "recording", calendar_event: "event", document: "document",
 };
 
+type ThreadMail = { id: string; occurred_at: string; direction: string | null; from_name: string | null; preview: string };
+
 export async function listProjectTimeline(ctx: Ctx, args: z.infer<typeof listProjectTimelineSchema>): Promise<string> {
   const { data, error } = await ctx.db.rpc("project_timeline", {
     p_project_id: args.project_id,
@@ -269,7 +271,18 @@ export async function listProjectTimeline(ctx: Ctx, args: z.infer<typeof listPro
     // other preview keeps its 160-char cap.
     const flat = r.preview ? r.preview.replace(/\s+/g, " ").trim() : "";
     const preview = flat && r.preview !== r.title ? ` — ${isAgentSession(r) ? flat : flat.slice(0, 160)}` : "";
-    return `- ${r.occurred_at.slice(0, 16).replace("T", " ")} ${label}: ${r.title}${preview} [${REF_KIND[r.kind]}:${r.item_id}]`;
+    // A mail row is a whole conversation (project_timeline groups replies);
+    // list its earlier mails underneath so each one stays reachable.
+    const thread = r.kind === "email" ? ((r.meta["thread"] ?? []) as ThreadMail[]) : [];
+    const note = thread.length > 1 ? ` (conversation, ${thread.length} mails)` : "";
+    const line = `- ${r.occurred_at.slice(0, 16).replace("T", " ")} ${label}: ${r.title}${note}${preview} [${REF_KIND[r.kind]}:${r.item_id}]`;
+    if (!note) return line;
+    const earlier = thread.filter((m) => m.id !== r.item_id).map((m) => {
+      const dir = m.direction === "outbound" ? "out" : `in${m.from_name ? ` from ${m.from_name}` : ""}`;
+      const text = m.preview ? ` — ${m.preview.replace(/\s+/g, " ").trim().slice(0, 120)}` : "";
+      return `    - ${m.occurred_at.slice(0, 16).replace("T", " ")} ${dir}${text} [email:${m.id}]`;
+    });
+    return [line, ...earlier].join("\n");
   });
   const nextBefore = rows.length === args.limit ? rows[rows.length - 1].occurred_at : "end";
   return [...lines, "", `next_before: ${nextBefore}`].join("\n");

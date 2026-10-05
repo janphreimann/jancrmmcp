@@ -116,7 +116,11 @@ function deltaLine(r: TimelineRow): string {
     ? isAgentSession(r) ? r.preview.replace(/\s+/g, " ").trim() : clip(r.preview, 120)
     : "";
   const preview = body ? ` — ${body}` : "";
-  return `- ${day(r.occurred_at)} ${label}${who}: ${clip(r.title, 120)}${preview} [${REF_KIND[r.kind]}:${r.item_id}]`;
+  // project_timeline() folds a mail conversation into one row (its newest
+  // mail); the other mails are in meta.thread and reached via get_email.
+  const n = r.kind === "email" ? Number(r.meta["thread_count"] ?? 1) : 1;
+  const thread = n > 1 ? ` (conversation, ${n} mails)` : "";
+  return `- ${day(r.occurred_at)} ${label}${who}: ${clip(r.title, 120)}${thread}${preview} [${REF_KIND[r.kind]}:${r.item_id}]`;
 }
 
 export function renderBriefing(b: Briefing, now: Date): string {
