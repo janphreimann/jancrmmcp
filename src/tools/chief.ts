@@ -243,12 +243,14 @@ export const updateStandingOrderSchema = z.object({
   instruction: z.string().trim().min(1).max(2000).optional(),
   enabled: z.boolean().optional().describe("false switches it off without deleting it"),
   project_id: z.string().uuid().nullable().optional().describe("A project id, or null for all projects"),
-}).strict().refine(
-  (a) => a.instruction !== undefined || a.enabled !== undefined || a.project_id !== undefined,
-  { message: "Nothing to update — pass instruction, enabled or project_id." }
-);
+}).strict();
 
 export async function updateStandingOrder(ctx: Ctx, args: z.infer<typeof updateStandingOrderSchema>) {
+  // Checked here, not with .refine: a ZodEffects has no .shape, so the MCP SDK
+  // would advertise the tool with no parameters at all.
+  if (args.instruction === undefined && args.enabled === undefined && args.project_id === undefined) {
+    throw new Error("Nothing to update — pass instruction, enabled or project_id.");
+  }
   await loadCallerChief(ctx, args.agent_id);
   const { error } = await ctx.db.rpc("update_standing_order", {
     p_id: args.standing_order_id,

@@ -173,7 +173,6 @@ for (const status of ["accepted", "rejected", "open"]) {
 }
 check("update_proposal_status accepts done with an outcome", updateProposalStatusSchema.safeParse({ agent_id: CHIEF, proposal_id: PR, status: "done", outcome: "ok" }).success);
 check("update_proposal_status rejects an empty outcome", !updateProposalStatusSchema.safeParse({ agent_id: CHIEF, proposal_id: PR, status: "done", outcome: "  " }).success);
-check("update_standing_order needs something to change", !updateStandingOrderSchema.safeParse({ agent_id: CHIEF, standing_order_id: SO }).success);
 check("update_standing_order accepts project_id null alone", updateStandingOrderSchema.safeParse({ agent_id: CHIEF, standing_order_id: SO, project_id: null }).success);
 
 const nonChief: Array<[string, Record<string, unknown>]> = [
@@ -215,6 +214,12 @@ check("update_proposal_status calls complete_chief_proposal", !r.isError && rpcs
 rpcResult = { data: false, error: null };
 r = await call("update_proposal_status", { agent_id: CHIEF, proposal_id: PR, status: "done", outcome: "Sent" });
 check("update_proposal_status reports a proposal that is not accepted", r.isError && /not accepted \(or already done\)/.test(r.text), r.text);
+
+const listed = (await client.listTools()).tools;
+for (const [n, key] of [["create_standing_order", "agent_id"], ["update_standing_order", "standing_order_id"], ["create_proposal", "agent_id"], ["update_proposal_status", "proposal_id"]]) {
+  const props = Object.keys((listed.find((t) => t.name === n)?.inputSchema as any)?.properties ?? {});
+  check(`${n} advertises its parameters`, props.includes("agent_id") && props.includes(key), JSON.stringify(props));
+}
 
 let threw = false;
 try { workerTools([`${P}create_proposal`]); } catch { threw = true; }
