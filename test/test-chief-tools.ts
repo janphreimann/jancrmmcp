@@ -199,7 +199,7 @@ r = await call("update_standing_order", { agent_id: CHIEF, standing_order_id: SO
 check("update_standing_order with a project does not clear it", !r.isError
   && rpcs[0].args.p_clear_project === false && rpcs[0].args.p_project_id === PJ && rpcs[0].args.p_enabled === false, r.text);
 r = await call("update_standing_order", { agent_id: CHIEF, standing_order_id: SO });
-check("update_standing_order with nothing to change is refused", r.isError && rpcs.length === 0, r.text);
+check("update_standing_order with nothing to change is refused", r.isError && /Nothing to update/.test(r.text) && rpcs.length === 0, r.text);
 
 rpcResult = { data: PR, error: null };
 r = await call("create_proposal", { agent_id: CHIEF, title: "Send follow-up", body: "Why and what", project_id: PJ });
