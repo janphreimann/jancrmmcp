@@ -88,7 +88,7 @@ import { openProjectSchema, openProject } from "./openProject.js";
 import {
   updateAgentStatusSchema, updateAgentStatus,
   rememberForProjectSchema, rememberForProject,
-  logProjectActivitySchema, logProjectActivity,
+  addTimelineEntrySchema, addTimelineEntry,
   proposeDescriptionSchema, proposeDescription,
   linkProjectItemSchema, linkProjectItem,
   listProjectTimelineSchema, listProjectTimeline,
@@ -170,7 +170,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "open_project",
-    "Open a project and get its briefing: current state (your status note and the human's project description, each with a date), what the user has told any agent about this project before (Memory), everything that happened since you last opened it, what is open, and an index of every document, interaction, recording, event and pinned note with ids you can pass to the drill-down tools. Call this first whenever a request concerns a project. Whenever the user tells you something that should still hold next time — a constraint, a preference, a decision, a correction of something you got wrong — save it in the same turn, without being asked: remember_for_project for this project, remember_about_user for what holds beyond it. Before you finish working on the project: call update_agent_status if the state changed, and log_project_activity with a one-paragraph summary of what you did — that is how your next visit knows where you left off.",
+    "Open a project and get its briefing: current state (your status note and the human's project description, each with a date), what the user has told any agent about this project before (Memory), everything that happened since you last opened it, what is open, and an index of every document, interaction, recording, event and pinned note with ids you can pass to the drill-down tools. Call this first whenever a request concerns a project. Whenever the user tells you something that should still hold next time — a constraint, a preference, a decision, a correction of something you got wrong — save it in the same turn, without being asked: remember_for_project for this project, remember_about_user for what holds beyond it. If the user tells you about something that happened in the project (a meeting, a call, a decision), add it with add_timeline_entry. Before you finish working on the project: call update_agent_status if the state changed — that is how your next visit knows where you left off. The timeline is the project's history, not your log: never write your own work into it.",
     openProjectSchema.shape,
     async (args) => text(await openProject(ctx, args as Parameters<typeof openProject>[1]))
   );
@@ -197,10 +197,10 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
   );
 
   server.tool(
-    "log_project_activity",
-    "Record what you did in this project session (one paragraph). Shows up in the project timeline and in your next briefing's delta. Call once per session, at the end.",
-    logProjectActivitySchema.shape,
-    async (args) => ok(await logProjectActivity(ctx, args as Parameters<typeof logProjectActivity>[1]))
+    "add_timeline_entry",
+    "Add an event to the project's timeline — the short history of what happened in the project, read by the people on it. Use it only when the user tells you about something that happened in the project and the CRM doesn't already hold it: \"I met Amelie yesterday, we talked about X\", \"Monica decided to drop the dashboard\", \"the offer went out today\". One event, one entry; check the timeline in the briefing first so you don't add it twice. Never use it for what you did, what you plan, what you couldn't do, or for an instruction the user gave you — where the project stands goes to update_agent_status, what the user wants you to keep in mind to remember_for_project. A mail, recording or calendar event is already in the timeline once linked (link_project_item); don't retell it.",
+    addTimelineEntrySchema.shape,
+    async (args) => ok(await addTimelineEntry(ctx, args as Parameters<typeof addTimelineEntry>[1]))
   );
 
   server.tool(

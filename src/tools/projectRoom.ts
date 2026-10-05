@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { agentMeta } from "../supabase.js";
 import type { Ctx } from "../context.js";
-import { isAgentSession, type TimelineRow } from "../briefing.js";
+import type { TimelineRow } from "../briefing.js";
 import { isNotFoundError } from "./dbErrors.js";
 
 // ── update_agent_status ─────────────────────────────────────────────────────
@@ -50,23 +50,72 @@ export async function rememberForProject(ctx: Ctx, args: z.infer<typeof remember
   return { id: args.project_id, message: "Project memory saved", length: memory.length };
 }
 
-// ── log_project_activity ────────────────────────────────────────────────────
-// project_journal has no created_by_agent/agent_approved columns (it's a
-// system log, not an entity table with an AgentBadge) — no agentMeta() here.
-export const logProjectActivitySchema = z.object({
+// ── add_timeline_entry ──────────────────────────────────────────────────────
+// The timeline is the project's history for the humans in it: what happened,
+// short. It is not Claude's notebook — where the project stands is
+// agent_status, what the user told Claude is agent_memory. So the one way
+// Claude writes here is an event the user reported that the CRM doesn't
+// already hold (a meeting, a call, a decision). It is filed under the user,
+// who reported it; metadata.via_agent marks who typed it.
+export const addTimelineEntrySchema = z.object({
   project_id: z.string().uuid(),
-  summary: z.string().min(10).max(4000).describe("One paragraph: what you did in this session and what is left open."),
+  occurred_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe(
+    "The day the event happened (YYYY-MM-DD) — not today unless it happened today. \"Yesterday\" in the user's message means yesterday's date."
+  ),
+  text: z.string().min(10).max(600).describe(
+    "One or two short sentences in English, the first line a headline of the event. Facts only: who, what, the outcome. " +
+    "No \"Jan reported\", no notes about what you did or could not do."
+  ),
+  type: z.enum(["note", "decision", "milestone"]).default("note").describe(
+    "decision: something was decided. milestone: a deliverable or phase was completed. note: anything else that happened."
+  ),
+  contact_ids: z.array(z.string().uuid()).max(10).optional().describe("Contacts involved in the event"),
+  company_ids: z.array(z.string().uuid()).max(10).optional().describe("Companies involved in the event"),
 });
 
-export async function logProjectActivity(ctx: Ctx, args: z.infer<typeof logProjectActivitySchema>) {
+const ENTRY_TYPE: Record<z.infer<typeof addTimelineEntrySchema>["type"], string> = {
+  note: "note", decision: "decision", milestone: "completed",
+};
+
+export async function addTimelineEntry(ctx: Ctx, args: z.infer<typeof addTimelineEntrySchema>) {
+  // Tags carry the names (the timeline renders them without a lookup), so
+  // they are read under the caller's token: an id they cannot see is dropped.
+  const [contacts, companies] = await Promise.all([
+    args.contact_ids?.length
+      ? ctx.db.from("contacts").select("id, first_name, last_name").in("id", args.contact_ids)
+      : Promise.resolve({ data: [], error: null }),
+    args.company_ids?.length
+      ? ctx.db.from("companies").select("id, name, website").in("id", args.company_ids)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (contacts.error) throw new Error(contacts.error.message);
+  if (companies.error) throw new Error(companies.error.message);
+
+  const today = new Date().toISOString().slice(0, 10);
+  // A past day has no meaningful time of day: noon UTC keeps it on that date
+  // in every European timezone, and date_only tells the UI not to show it.
+  const occurredAt = args.occurred_on === today ? new Date().toISOString() : `${args.occurred_on}T12:00:00Z`;
+  const contactTags = (contacts.data ?? []).map((c: { id: string; first_name: string | null; last_name: string | null }) => ({
+    id: c.id, name: [c.first_name, c.last_name].filter(Boolean).join(" "),
+  }));
+  const companyTags = (companies.data ?? []).map((c: { id: string; name: string; website: string | null }) => ({
+    id: c.id, name: c.name, website: c.website,
+  }));
+
   const { data, error } = await ctx.db
     .from("project_journal")
     .insert({
       project_id: args.project_id,
-      entry_type: "agent_session",
-      content: args.summary.trim(),
-      metadata: { tool: "log_project_activity" },
-      is_system: true,
+      entry_type: ENTRY_TYPE[args.type],
+      content: args.text.trim(),
+      occurred_at: occurredAt,
+      metadata: {
+        via_agent: true,
+        ...(args.occurred_on !== today && { date_only: true }),
+        ...(contactTags.length && { contacts: contactTags }),
+        ...(companyTags.length && { companies: companyTags }),
+      },
+      is_system: false,
       created_by: ctx.userId,
     })
     .select("id")
@@ -79,7 +128,7 @@ export async function logProjectActivity(ctx: Ctx, args: z.infer<typeof logProje
     if (isNotFoundError(error)) throw new Error(`Project ${args.project_id} not found`);
     throw new Error(error.message);
   }
-  return { id: data.id, message: "Session logged" };
+  return { id: data.id, message: "Added to the timeline" };
 }
 
 // ── propose_description ─────────────────────────────────────────────────────
@@ -267,10 +316,8 @@ export async function listProjectTimeline(ctx: Ctx, args: z.infer<typeof listPro
   const lines = rows.map((r) => {
     let label = KIND_LABEL[r.kind];
     if (r.kind === "email") label = r.meta["direction"] === "outbound" ? "Mail out" : "Mail in";
-    // Claude's own session log is shown in full (see isAgentSession); every
-    // other preview keeps its 160-char cap.
     const flat = r.preview ? r.preview.replace(/\s+/g, " ").trim() : "";
-    const preview = flat && r.preview !== r.title ? ` — ${isAgentSession(r) ? flat : flat.slice(0, 160)}` : "";
+    const preview = flat && r.preview !== r.title ? ` — ${flat.slice(0, 160)}` : "";
     // A mail row is a whole conversation (project_timeline groups replies);
     // list its earlier mails underneath so each one stays reachable.
     const thread = r.kind === "email" ? ((r.meta["thread"] ?? []) as ThreadMail[]) : [];

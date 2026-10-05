@@ -101,19 +101,12 @@ function ext(name: string): string {
   return m ? m[1].toLowerCase() : "file";
 }
 
-// Claude's own session log (log_project_activity). project_timeline already
-// caps it at 1500 chars; clipping it again here would leave Claude unable to
-// read back what it wrote last session — so it is shown in full.
-export function isAgentSession(r: TimelineRow): boolean {
-  return r.kind === "journal" && r.meta["entry_type"] === "agent_session";
-}
-
 function deltaLine(r: TimelineRow): string {
   let label = KIND_LABEL[r.kind];
   if (r.kind === "email") label = r.meta["direction"] === "outbound" ? "Mail out" : "Mail in";
   const who = r.kind === "email" && r.meta["from_name"] ? ` from ${r.meta["from_name"]}` : "";
   const body = r.preview && r.preview !== r.title
-    ? isAgentSession(r) ? r.preview.replace(/\s+/g, " ").trim() : clip(r.preview, 120)
+    ? clip(r.preview, 120)
     : "";
   const preview = body ? ` — ${body}` : "";
   // project_timeline() folds a mail conversation into one row (its newest
@@ -275,7 +268,7 @@ export function renderBriefing(b: Briefing, now: Date): string {
   // ── tools ──
   out.push("", "## Tools");
   out.push("Drill down: get_document_content · get_interaction · get_audio_recording · get_email · list_project_timeline(project_id, before, kinds, limit)");
-  out.push("Write back: remember_for_project · update_agent_status · log_project_activity · suggest_next_step · propose_description · link_project_item · create_task · update_task · create_text_document");
+  out.push("Write back: remember_for_project · update_agent_status · add_timeline_entry · suggest_next_step · propose_description · link_project_item · create_task · update_task · create_text_document");
   out.push(`project_id: ${p.id}`);
 
   return out.join("\n") + "\n";
