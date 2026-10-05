@@ -71,7 +71,12 @@ import {
   rememberAboutUserSchema, rememberAboutUser,
 } from "./selfManagement.js";
 import { readChatHistorySchema, readChatHistory } from "./chatHistory.js";
-import { getOverviewSchema, getOverview } from "./chief.js";
+import {
+  getOverviewSchema, getOverview,
+  createAgentSchema, createAgent, updateAgentSchema, updateAgent,
+  pauseAgentSchema, pauseAgent, deleteAgentSchema, deleteAgent,
+  delegateSchema, delegate,
+} from "./chief.js";
 import {
   scheduleRoutineSchema, scheduleRoutine,
   updateRoutineSchema, updateRoutine,
@@ -543,6 +548,33 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "The big picture: every agent you can see (job, routines, last run, paused), the runs of the last 48 hours, the projects with the most recent activity (with their status note) and the open/overdue task counts. Call it whenever a question is about what is going on overall, or before handing work to another agent.",
     getOverviewSchema.shape,
     async (args) => ok(await getOverview(ctx, args as Parameters<typeof getOverview>[1]))
+  );
+
+  // registerTool with the full object schema keeps .strict() (see update_project).
+  server.registerTool(
+    "delegate",
+    { description: "Hand a task to another agent and get the result back: it runs as a new turn in that agent's thread, and its final reply comes back to you as a message \"Result from …\". Returns at once. Use agent ids from get_overview. Only the Chief delegates on its own; other agents only while working on a task delegated to them. For notes that need no reply, use send_agent_message.", inputSchema: delegateSchema },
+    async (args) => ok(await delegate(ctx, args as Parameters<typeof delegate>[1]))
+  );
+  server.registerTool(
+    "create_agent",
+    { description: "Chief only: create a helper agent with a fixed job. Set temporary=true for a one-off job — it is removed automatically (default after 48 hours). Tools: CRM tools only; omit to give it your own CRM tools.", inputSchema: createAgentSchema },
+    async (args) => ok(await createAgent(ctx, args as Parameters<typeof createAgent>[1]))
+  );
+  server.registerTool(
+    "update_agent",
+    { description: "Chief only: rename one of the user's agents, or change job, tools or expiry of an agent you created. System agents cannot be changed.", inputSchema: updateAgentSchema },
+    async (args) => ok(await updateAgent(ctx, args as Parameters<typeof updateAgent>[1]))
+  );
+  server.registerTool(
+    "pause_agent",
+    { description: "Chief only: pause or resume one of the user's agents. A paused agent runs no routines and takes no delegated tasks.", inputSchema: pauseAgentSchema },
+    async (args) => ok(await pauseAgent(ctx, args as Parameters<typeof pauseAgent>[1]))
+  );
+  server.registerTool(
+    "delete_agent",
+    { description: "Chief only: remove an agent you created (soft delete — restorable). Agents the user built and system agents cannot be deleted by you.", inputSchema: deleteAgentSchema },
+    async (args) => ok(await deleteAgent(ctx, args as Parameters<typeof deleteAgent>[1]))
   );
 
   // ─── Routines ────────────────────────────────────────────────────────────
