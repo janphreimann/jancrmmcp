@@ -106,3 +106,57 @@ export function resolveSegmentSpeakers(
     };
   });
 }
+
+// Claude Code lets at most 25,000 tokens of one MCP result into the model;
+// anything larger is parked in a local file that only an agent with
+// Read/Bash can open. A 67-minute meeting came to 141 KB and left the Chief
+// (MCP tools only) unable to read its own recording. 40,000 characters of
+// German transcript stay around 12,000 tokens, well below that line.
+export const TRANSCRIPT_PAGE_DEFAULT_CHARS = 40_000;
+export const TRANSCRIPT_PAGE_MAX_CHARS = 60_000;
+
+/**
+ * One line per segment ("Name: text"), paragraphs between them. Without
+ * segments (no diarization) the plain transcript stands in. The output
+ * depends only on the stored row, so a character offset into it stays valid
+ * from one call to the next.
+ */
+export function renderTranscript(segments: ResolvedSegment[], transcript: string | null): string {
+  if (segments.length > 0) {
+    return segments.map((s) => `${s.speaker_name}: ${s.text.trim()}`).join("\n\n");
+  }
+  return transcript?.trim() ?? "";
+}
+
+export interface TranscriptPage {
+  text: string;
+  offset: number;
+  next_offset: number | null;
+  total_chars: number;
+}
+
+/**
+ * Cuts at most maxChars from offset, preferring a paragraph break, then a
+ * line break, then a space in the second half of the window — never in the
+ * middle of a word unless the window holds no whitespace at all.
+ */
+export function pageTranscript(full: string, offset: number, maxChars: number): TranscriptPage {
+  const start = Math.min(Math.max(0, Math.floor(offset)), full.length);
+  let end = Math.min(start + maxChars, full.length);
+  if (end < full.length) {
+    const window = full.slice(start, end);
+    for (const sep of ["\n\n", "\n", " "]) {
+      const at = window.lastIndexOf(sep);
+      if (at > window.length / 2) {
+        end = start + at + sep.length;
+        break;
+      }
+    }
+  }
+  return {
+    text: full.slice(start, end).trim(),
+    offset: start,
+    next_offset: end < full.length ? end : null,
+    total_chars: full.length,
+  };
+}

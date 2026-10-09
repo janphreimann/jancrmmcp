@@ -461,7 +461,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "get_audio_recording",
-    "Get the full transcript and summary of one call/meeting recording session (segments with resolved speaker names, linked contacts/companies). Never returns the audio file itself.",
+    "Get the transcript (one line per speaker turn, \"Name: text\"), summary, speakers and linked contacts/companies of one call/meeting recording session. Long transcripts come in pages: while has_more is true, call again with offset = next_offset. Read every page before you summarize or quote — a summary built from the first page alone misses the rest of the meeting. Never returns the audio file itself.",
     getAudioRecordingSchema.shape,
     async (args) => ok(await getAudioRecording(ctx, args as Parameters<typeof getAudioRecording>[1]))
   );

@@ -4,6 +4,10 @@ import {
   groupSessionsByRecordingGroup,
   transcriptSnippet,
   resolveSegmentSpeakers,
+  renderTranscript,
+  pageTranscript,
+  TRANSCRIPT_PAGE_DEFAULT_CHARS,
+  TRANSCRIPT_PAGE_MAX_CHARS,
   type AudioRecordingRow,
 } from "./audioRecordingHelpers.js";
 
@@ -218,6 +222,12 @@ export const getAudioRecordingSchema = z.object({
   recording_group_id: z.string().uuid().describe(
     "recording_group_id of the session (from search_audio_recordings)"
   ),
+  offset: z.number().int().min(0).optional().default(0).describe(
+    "Character offset into the transcript. Leave at 0 for the first page; pass the previous answer's next_offset to continue."
+  ),
+  max_chars: z.number().int().min(1_000).max(TRANSCRIPT_PAGE_MAX_CHARS).optional().default(TRANSCRIPT_PAGE_DEFAULT_CHARS).describe(
+    `Page size in characters (default ${TRANSCRIPT_PAGE_DEFAULT_CHARS}, max ${TRANSCRIPT_PAGE_MAX_CHARS})`
+  ),
 });
 
 export async function getAudioRecording(ctx: Ctx, args: z.infer<typeof getAudioRecordingSchema>) {
@@ -233,16 +243,33 @@ export async function getAudioRecording(ctx: Ctx, args: z.infer<typeof getAudioR
   const [session] = groupSessionsByRecordingGroup(data as AudioRecordingRow[]);
   const { contactsByGroup, companiesByGroup } = await attachContactsAndCompanies(ctx, [session.recording_group_id]);
 
+  // The transcript used to come twice — as `transcript` and again as
+  // `segments` — and whole, which pushed long meetings past the MCP output
+  // limit. Now it comes once, rendered with speaker names, one page at a time.
+  const segments = resolveSegmentSpeakers(session.segments, session.speaker_labels);
+  const page = pageTranscript(
+    renderTranscript(segments, session.transcript),
+    args.offset ?? 0,
+    args.max_chars ?? TRANSCRIPT_PAGE_DEFAULT_CHARS
+  );
+  const speakers = new Map<string, string | null>();
+  for (const s of segments) if (!speakers.has(s.speaker_name)) speakers.set(s.speaker_name, s.contact_id);
+
   return {
     recording_group_id: session.recording_group_id,
     title: session.title,
     created_at: session.created_at,
     duration_seconds: session.duration_seconds,
     transcription_status: session.transcription_status,
-    transcript: session.transcript,
-    summary: session.summary,
-    segments: resolveSegmentSpeakers(session.segments, session.speaker_labels),
+    // Same on every page; only the first one carries it.
+    ...(page.offset === 0 ? { summary: session.summary } : {}),
+    speakers: Array.from(speakers, ([name, contact_id]) => ({ name, contact_id })),
     contacts: contactsByGroup.get(session.recording_group_id) ?? [],
     companies: companiesByGroup.get(session.recording_group_id) ?? [],
+    transcript: page.text,
+    offset: page.offset,
+    total_chars: page.total_chars,
+    next_offset: page.next_offset,
+    has_more: page.next_offset !== null,
   };
 }
