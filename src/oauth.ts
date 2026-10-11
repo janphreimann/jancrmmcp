@@ -371,12 +371,18 @@ export const oauthProvider: OAuthServerProvider = {
 
   async exchangeAuthorizationCode(
     client: OAuthClientInformationFull,
-    authorizationCode: string
+    authorizationCode: string,
+    _codeVerifier?: string,
+    redirectUri?: string
   ): Promise<OAuthTokens> {
     const parsed = open<CodePayload>(authorizationCode);
     if (!parsed || parsed.t !== "code") throw new Error("Invalid authorization code");
     if (Date.now() > parsed.exp) throw new Error("Authorization code expired");
     if (parsed.c !== client.client_id) throw new Error("client_id mismatch");
+    // RFC 6749 §4.1.3: a redirect_uri sent with the token request must be the
+    // one the code was issued for. (OAuth 2.1 lets clients omit it; PKCE
+    // binds the exchange then.)
+    if (redirectUri !== undefined && redirectUri !== parsed.r) throw new Error("redirect_uri mismatch");
     return issueTokens(client.client_id, { sub: parsed.sub, at: parsed.at, rt: parsed.rt });
   },
 

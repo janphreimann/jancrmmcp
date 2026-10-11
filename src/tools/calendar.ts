@@ -90,10 +90,30 @@ function buildICal(uid: string, ev: IcalEvent): string {
   return lines.join("\r\n") + "\r\n";
 }
 
+// Where CalDAV credentials may go: https on the same site (last two labels)
+// as the account — iCloud redirects caldav.icloud.com → pNN-caldav.icloud.com.
+// calendar_url comes from rows the user can write, so without this the Basic
+// credentials went wherever that URL (or a redirect) pointed.
+function caldavSite(u: string): string | null {
+  try {
+    const url = new URL(u);
+    if (url.protocol !== "https:") return null;
+    return url.hostname.toLowerCase().split(".").slice(-2).join(".");
+  } catch {
+    return null;
+  }
+}
+
+function sameCaldavSite(a: string, b: string): boolean {
+  const sa = caldavSite(a);
+  return sa !== null && sa === caldavSite(b);
+}
+
 // ── CalDAV request with manual redirect handling ─────────────────────────────
 
 async function caldavPut(url: string, auth: string, ical: string): Promise<{ status: number; text: string }> {
   let currentUrl = url;
+  if (!caldavSite(url)) return { status: 0, text: "calendar URL must be https" };
   for (let i = 0; i < 5; i++) {
     const resp = await fetch(currentUrl, {
       method: "PUT",
@@ -110,6 +130,7 @@ async function caldavPut(url: string, auth: string, ical: string): Promise<{ sta
       const loc = resp.headers.get("location");
       if (!loc) break;
       currentUrl = loc.startsWith("http") ? loc : new URL(loc, currentUrl).href;
+      if (!sameCaldavSite(url, currentUrl)) return { status: 0, text: "redirect to another site refused" };
       continue;
     }
     return { status: resp.status, text: await resp.text() };
@@ -205,7 +226,9 @@ export async function createCalendarEvent(ctx: Ctx, args: z.infer<typeof createC
   const accounts = (acctData ?? []) as Array<{ user_id: string; url: string; username: string; password: string }>;
   if (!accounts.length) throw new Error("No CalDAV account configured in the CRM.");
 
-  const account = accounts.find((a) => calendar.url.startsWith(a.url.replace(/\/$/, ""))) ?? accounts[0];
+  // No fallback to accounts[0]: a calendar on another server would get its password.
+  const account = accounts.find((a) => sameCaldavSite(a.url, calendar.url));
+  if (!account) throw new Error("No CalDAV account in the CRM matches this calendar.");
   const auth = Buffer.from(`${account.username}:${account.password}`).toString("base64");
 
   const uid = generateUid();
@@ -222,7 +245,7 @@ export async function createCalendarEvent(ctx: Ctx, args: z.infer<typeof createC
   const base = calendar.url.endsWith("/") ? calendar.url : calendar.url + "/";
   const resp = await caldavPut(`${base}${uid}.ics`, auth, ical);
   if (resp.status < 200 || resp.status > 299) {
-    throw new Error(`CalDAV PUT failed: HTTP ${resp.status} — ${resp.text.slice(0, 200)}`);
+    throw new Error(`CalDAV PUT failed: HTTP ${resp.status}${resp.status === 0 ? ` — ${resp.text}` : ""}`);
   }
 
   // Mirror the event into calendar_events so it appears in the CRM instantly.

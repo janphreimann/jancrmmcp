@@ -81,7 +81,9 @@ export async function listDocuments(ctx: Ctx, args: z.infer<typeof listDocuments
     }
   }
   if (args.query) {
-    q = q.or(`file_name.ilike.%${args.query}%,description.ilike.%${args.query}%`);
+    // or() splits on commas/parentheses and reads * as a wildcard.
+    const term = args.query.replace(/[,()%*"\\]/g, " ").trim();
+    if (term) q = q.or(`file_name.ilike.%${term}%,description.ilike.%${term}%`);
   }
   if (args.doc_type) q = q.eq("doc_type", args.doc_type);
   if (args.contact_id) q = q.eq("contact_id", args.contact_id);

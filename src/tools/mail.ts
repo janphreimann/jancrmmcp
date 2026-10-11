@@ -2,6 +2,12 @@ import { z } from "zod";
 import { supabaseUrl } from "../supabase.js";
 import type { Ctx } from "../context.js";
 
+// PostgREST's or() splits on commas and parentheses, and reads * as a
+// wildcard — a search term must never add filter clauses of its own.
+function orTerm(value: string): string {
+  return value.replace(/[,()%*"\\]/g, " ").trim();
+}
+
 /**
  * Löst account_id wie createEmailDraft auf: eigene Konten nur, ms_email_accounts
  * hängt am Nutzer und nicht an der Organisation. Ohne account_id gewinnt das
@@ -171,7 +177,7 @@ export async function listEmails(ctx: Ctx, args: z.infer<typeof listEmailsSchema
         .from("email_folders")
         .select("id")
         .eq("account_id", accountId)
-        .or(`name.ilike.%${args.folder}%,display_name.ilike.%${args.folder}%`)
+        .or(`name.ilike.%${orTerm(args.folder)}%,display_name.ilike.%${orTerm(args.folder)}%`)
         .limit(1);
       if (error) throw new Error(error.message);
       if (!data?.length) throw new Error(`Folder "${args.folder}" not found in this account.`);
@@ -188,8 +194,8 @@ export async function listEmails(ctx: Ctx, args: z.infer<typeof listEmailsSchema
 
   if (folderId) q = q.eq("folder_id", folderId);
   if (args.unread_only) q = q.eq("is_read", false);
-  if (args.search) {
-    const term = `%${args.search}%`;
+  if (args.search && orTerm(args.search)) {
+    const term = `%${orTerm(args.search)}%`;
     q = q.or(`subject.ilike.${term},from_name.ilike.${term},from_address.ilike.${term}`);
   }
 
