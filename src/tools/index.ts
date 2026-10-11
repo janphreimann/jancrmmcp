@@ -93,6 +93,7 @@ import {
   linkProjectItemSchema, linkProjectItem,
   listProjectTimelineSchema, listProjectTimeline,
 } from "./projectRoom.js";
+import { setRecordingPreferenceSchema, setRecordingPreference } from "./recordingPreferences.js";
 import { getInteractionSchema, getInteraction, listInteractionsObject, listInteractions } from "./interactions.js";
 
 function ok(result: unknown) {
@@ -464,6 +465,13 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Get the transcript (one line per speaker turn, \"Name: text\"), summary, speakers and linked contacts/companies of one call/meeting recording session. Long transcripts come in pages: while has_more is true, call again with offset = next_offset. Read every page before you summarize or quote — a summary built from the first page alone misses the rest of the meeting. Never returns the audio file itself.",
     getAudioRecordingSchema.shape,
     async (args) => ok(await getAudioRecording(ctx, args as Parameters<typeof getAudioRecording>[1]))
+  );
+
+  server.tool(
+    "set_recording_preference",
+    "Change how the user's recordings and uploaded transcripts are processed — only when the user asks for it (\"summaries in English\", \"no tasks for the other side\", \"keep filler words\"). Pass the step and the COMPLETE new wish text for it (merge with the current text from your overview). The reply format of each step is fixed and cannot be changed here. Applies from the next recording; nothing already generated is redone.",
+    setRecordingPreferenceSchema.shape,
+    async (args) => ok(await setRecordingPreference(ctx, args as Parameters<typeof setRecordingPreference>[1]))
   );
 
   server.tool(

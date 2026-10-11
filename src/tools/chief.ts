@@ -24,7 +24,7 @@ const CRM_PREFIX = "mcp__jan-crm__";
 // Never handed to an agent the Chief creates: the manager's own tools.
 const MANAGER_ONLY = new Set(
   ["get_overview", "delegate", "create_agent", "update_agent", "pause_agent", "delete_agent", "update_agent_profile",
-    "create_standing_order", "update_standing_order", "create_proposal", "update_proposal_status"]
+    "create_standing_order", "update_standing_order", "create_proposal", "update_proposal_status", "set_recording_preference"]
     .map((n) => CRM_PREFIX + n)
 );
 const MAX_MANAGED_AGENTS = 20;
