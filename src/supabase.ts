@@ -24,6 +24,8 @@ export const supabaseAnonKey = SUPABASE_ANON_KEY;
  *   Session für den bereits identifizierten Nutzer zu erzeugen (kein Mail-
  *   Versand, keine wählbare Identität — `email` kommt aus `getUserById(user_id)`
  *   einer Zeile, deren `user_id` selbst nur aus `auth.uid()` gesetzt wurde).
+ *   Gleich danach `register_mcp_session` (nur service_role), damit diese
+ *   aal1-Sitzung trotz MFA des Owners zugelassen wird.
  */
 export const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

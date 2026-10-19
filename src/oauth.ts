@@ -134,17 +134,25 @@ interface RefreshPayload { t: "refresh"; c: string; sub: string; rt: string; exp
 
 const REFRESH_TOKEN_TTL = 30 * 24 * 3600; // 30 Tage
 
+/** Claims des Supabase-Access-Tokens, ohne Prüfung der Signatur (die prüft Supabase). */
+function accessTokenClaims(supabaseAccessToken: string): { exp?: number; session_id?: string } | null {
+  try {
+    return JSON.parse(Buffer.from(supabaseAccessToken.split(".")[1], "base64url").toString()) as {
+      exp?: number;
+      session_id?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Laufzeit des Supabase-Access-Tokens aus dessen eigenem `exp` — das MCP-Token
  * soll keine Sekunde länger gelten als die CRM-Sitzung, die darin steckt.
  */
 function accessTokenExpiry(supabaseAccessToken: string): number {
-  try {
-    const claims = JSON.parse(
-      Buffer.from(supabaseAccessToken.split(".")[1], "base64url").toString()
-    ) as { exp?: number };
-    if (claims.exp) return claims.exp;
-  } catch { /* fällt unten auf den Standard zurück */ }
+  const exp = accessTokenClaims(supabaseAccessToken)?.exp;
+  if (exp) return exp;
   return Math.floor(Date.now() / 1000) + 3600;
 }
 
@@ -500,6 +508,31 @@ export async function handleDevicePoll(req: Request, res: Response): Promise<voi
   });
   if (verifyError || !verified.session) {
     res.status(401).json({ status: "expired", error: "Sitzung ist ungültig. Bitte fordere einen neuen Code an." });
+    return;
+  }
+
+  // Die frische Sitzung ist aal1 (nur Magic Link) — sobald der Owner einen
+  // zweiten Faktor eingerichtet hat, sähe sie im CRM nichts mehr. Die
+  // Freigabe in der Web-App verlangt bereits aal2 (claim_mcp_device_grant),
+  // also wird diese Sitzung hier als MCP-Sitzung registriert und damit
+  // zugelassen (Migration 20261107005700_owner_mfa.sql). Scheitert das,
+  // gibt es keine Tokens: eine nicht registrierte Sitzung wäre eine
+  // Verbindung, die in der Liste unter Settings → Security fehlt und sich
+  // nicht widerrufen lässt.
+  const sessionId = accessTokenClaims(verified.session.access_token)?.session_id;
+  const clientName = decodeClient(row.client_id)?.client_name ?? null;
+  const { error: registerError } = sessionId
+    ? await admin.rpc("register_mcp_session", {
+        p_session_id: sessionId,
+        p_user_id: targetUser.user.id,
+        p_client_name: clientName,
+      })
+    : { error: new Error("access token without session_id") };
+  if (registerError) {
+    console.error("register_mcp_session failed", registerError);
+    // Die Sitzung nicht verwaist liegen lassen.
+    await admin.auth.admin.signOut(verified.session.access_token, "local").catch(() => undefined);
+    res.status(502).json({ status: "expired", error: "Verbindung konnte nicht abgeschlossen werden. Bitte fordere einen neuen Code an." });
     return;
   }
 

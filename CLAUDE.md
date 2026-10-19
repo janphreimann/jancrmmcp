@@ -169,6 +169,23 @@ den Server nie — nur sein SHA-256 liegt in `mcp_device_grants.secret_hash`.
 Einlöse-Versuche sind pro Nutzer rate-limitiert
 (`mcp_device_claim_attempts`).
 
+**Zweiter Faktor (MFA).** Seit `20261107005700_owner_mfa.sql` sieht eine
+aal1-Sitzung im CRM nichts mehr, sobald der Owner einen TOTP-Faktor hat — und
+die Sitzung, die `handleDevicePoll` per `generateLink` + `verifyOtp` erzeugt,
+ist für immer aal1. Deshalb registriert `handleDevicePoll` sie direkt danach
+über `admin.rpc("register_mcp_session", …)` (session_id aus dem Access-Token,
+Client-Name aus der signierten `client_id`). Die Datenbank lässt registrierte
+MCP-Sitzungen durch; den zweiten Faktor hat der Owner schon beim Freigeben in
+der Web-App eingegeben (`claim_mcp_device_grant` verlangt aal2). **Fail
+closed:** scheitert die Registrierung, wird die frische Sitzung abgemeldet und
+kein Code ausgestellt. Das ist die zweite begründete `service_role`-Verwendung
+in `oauth.ts`. Ein Refresh behält die session_id, die Registrierung gilt also
+so lange wie die Sitzung; der Owner widerruft sie in Settings → Security →
+Connected apps (`revoke_mcp_session` löscht die Auth-Sitzung, der nächste
+Refresh scheitert, der Client muss neu verbinden). Verbindungen von vor dem
+Deploy sind nicht registriert und müssen nach der Einrichtung des Faktors neu
+verbunden werden.
+
 Edge Functions ruft der Server mit `ctx.accessToken` auf, nicht mit dem
 Service-Key: `mail-create-draft` löst das Postfach dann selbst über
 `auth.uid()` auf.
