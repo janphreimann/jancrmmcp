@@ -14,6 +14,11 @@ AgentBadge reject path for calendar events in the webapp goes through the
 
 ## Deployment
 
+The default branch is **`master`** — Vercel deploys jancrmmcp.vercel.app from
+there (the CRM repo uses `main`). Push with `git push origin master`, never
+`HEAD:main`: that once created a stray `main` branch instead of deploying.
+Check `git status -sb` first.
+
 This server and the CRM webapp (`../janreimanncrm`) are two **separate Vercel
 projects**. Each has its own env vars configured in its own Vercel project
 dashboard — there is no shared config and no repo-level `vercel.json` env
@@ -166,3 +171,22 @@ permanently — approval is a one-way switch, there's no "unapprove".
 
 Update-tools (`update_contact`, `update_project`, etc.) do not touch these
 columns — they only matter at creation time.
+
+## Working with Jan
+
+- Talk to Jan in German.
+- Carry a planned build through to the end on your own, with subagents in
+  parallel for independent tasks (one worktree each). Decide open design
+  questions yourself and list the decisions at the end. Stop only for outward
+  or irreversible steps: creating accounts, pushing, deploying, anything that
+  needs Jan's credentials.
+- Ask before any computer use (Claude in Chrome, desktop control) and wait for
+  an explicit yes.
+- No GitHub Actions, CI workflows or GitHub secrets. Checks run locally before
+  a push.
+- The CRM database (`lgmdjkjwiimyqkmyfnlt`) is changed via the Supabase
+  Management API from `../janreimanncrm` (see its CLAUDE.md). The Supabase MCP
+  connector is scoped to another organization and cannot reach it.
+- Durable knowledge belongs in this repo: when Jan states a rule, decides
+  something or corrects you, write it into this file in the same turn. Don't
+  rely on Claude's auto memory — in a sandbox it is gone after the session.
