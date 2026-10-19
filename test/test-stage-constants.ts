@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { PROJECT_STAGES } from "../src/constants.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const frontendFile = resolve(here, "../../janreimanncrm/src/modules/projects/constants.ts");
+const frontendFile = resolve(here, "../../private-janreimanncrm/src/modules/projects/constants.ts");
 const src = readFileSync(frontendFile, "utf8");
 
 const m = src.match(/export const PROJECT_STAGES = \[([\s\S]*?)\] as const;/);

@@ -1,4 +1,4 @@
-// Must equal src/modules/projects/constants.ts in ../janreimanncrm —
+// Must equal src/modules/projects/constants.ts in ../private-janreimanncrm —
 // test/test-stage-constants.ts fails otherwise. Stages are stored verbatim.
 export const PROJECT_STAGES = ["Planning", "Active", "In Review", "Done", "On Hold"] as const;
 export type ProjectStage = (typeof PROJECT_STAGES)[number];

@@ -252,7 +252,7 @@ function formatCode(code: string): string {
 /**
  * Zeigt den Pairing-Code und pollt im Hintergrund, bis er in der CRM-Web-App
  * eingelöst wurde. Ersetzt den früheren Magic-Link-Login (siehe Kommentar an
- * `../janreimanncrm/supabase/migrations/20261104000400_mcp_device_grants.sql`):
+ * `../private-janreimanncrm/supabase/migrations_archive/20261104000400_mcp_device_grants.sql`):
  * Mail-Clients öffnen Links regelmäßig in einem anderen Browser-Kontext als
  * dem, in dem die Anmeldung gestartet wurde, was die frühere Cookie-Bindung
  * fälschlich als Fehler auslöste. Der Device-Code braucht keinen bestimmten

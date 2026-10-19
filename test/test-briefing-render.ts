@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { renderBriefing, type Briefing } from "../src/briefing.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const fixtures = resolve(here, "../../janreimanncrm/docs/superpowers/fixtures");
+const fixtures = resolve(here, "../../private-janreimanncrm/docs/superpowers/fixtures");
 const NOW = new Date("2026-09-24T09:00:00Z");
 
 let failed = 0;

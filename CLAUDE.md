@@ -2,7 +2,7 @@
 
 MCP server exposing CRM tools (contacts, companies, projects, tasks, calendar
 events, documents, folders, notes) to AI agents (Claude, claude.ai connector) backed
-by the same Supabase project as the main CRM webapp (`../janreimanncrm`).
+by the same Supabase project as the main CRM webapp (`../private-janreimanncrm`).
 
 Calendar events are special: they live on an external CalDAV server, and the
 `calendar_events` table is only a sync mirror. `create_calendar_event`
@@ -19,7 +19,7 @@ there (the CRM repo uses `main`). Push with `git push origin master`, never
 `HEAD:main`: that once created a stray `main` branch instead of deploying.
 Check `git status -sb` first.
 
-This server and the CRM webapp (`../janreimanncrm`) are two **separate Vercel
+This server and the CRM webapp (`../private-janreimanncrm`) are two **separate Vercel
 projects**. Each has its own env vars configured in its own Vercel project
 dashboard — there is no shared config and no repo-level `vercel.json` env
 wiring for secrets.
@@ -75,11 +75,11 @@ const { data, error } = await ctx.db
 If the new tool targets a table that doesn't have these two columns yet, add
 them **before** wiring up the tool — do not skip the flag because a table is
 new. DDL läuft wieder über Migrationsdateien in
-`../janreimanncrm/supabase/migrations/`, die anschliessend über den
+`../private-janreimanncrm/supabase/migrations/`, die anschliessend über den
 Management-Query-Endpunkt eingespielt werden — nicht über den
 Dashboard-SQL-Editor, sonst fehlt die Änderung im Repo. Danach die generierten
 Typen neu erzeugen (`supabase gen types typescript --project-id <ref>`) und
-`../janreimanncrm/supabase/schema_export.sql` über
+`../private-janreimanncrm/supabase/schema_export.sql` über
 `supabase/gen_schema_export.py` neu ziehen.
 
 ## Einzelnutzer-Betrieb
@@ -148,7 +148,7 @@ Schranken sichern den Flow ab — keine davon ohne Ersatz entfernen:
   Code.
 - **Keine vom Aufrufer wählbare Identität.** `oauthProvider.authorize()` ruft
   `create_mcp_device_grant` (Migration
-  `../janreimanncrm/supabase/migrations/20261104000400_mcp_device_grants.sql`)
+  `../private-janreimanncrm/supabase/migrations_archive/20261104000400_mcp_device_grants.sql`)
   ohne jede Nutzer-Angabe auf — nur die OAuth-Parameter des anfragenden
   Clients. Wessen Account verbunden wird, entscheidet ausschließlich, wer den
   angezeigten Code in der bereits eingeloggten CRM-Web-App einträgt
@@ -174,7 +174,7 @@ Service-Key: `mail-create-draft` löst das Postfach dann selbst über
 `auth.uid()` auf.
 
 The CRM frontend renders an "Agent" badge with an Approve button
-(`src/components/shared/AgentBadge.tsx` in `../janreimanncrm`) for any row where
+(`src/components/shared/AgentBadge.tsx` in `../private-janreimanncrm`) for any row where
 `created_by_agent = true` and `agent_approved = false`. Once a human clicks
 Approve, `agent_approved` flips to `true` and the badge disappears
 permanently — approval is a one-way switch, there's no "unapprove".

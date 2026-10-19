@@ -7,7 +7,7 @@ import type { Ctx } from "../context.js";
 // means a CalDAV PUT first, then upserting the mirror row so the event shows
 // up in the CRM immediately instead of waiting for the next sync-calendar run.
 // The iCal/CalDAV logic mirrors the webapp's write-calendar edge function
-// (../janreimanncrm/supabase/functions/write-calendar). Seit der Server unter
+// (../private-janreimanncrm/supabase/functions/write-calendar). Seit der Server unter
 // dem JWT des Nutzers spricht, wäre ein Aufruf dieser Funktion möglich — die
 // Verdopplung bleibt vorerst, bis jemand sie zusammenlegt.
 

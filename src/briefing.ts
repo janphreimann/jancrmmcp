@@ -1,8 +1,8 @@
 // Renders get_project_briefing()'s JSON into the markdown Claude reads
 // (spec §4.2). Pure and dependency-free on purpose: Plan B copies this file
-// byte-for-byte into ../janreimanncrm/src/modules/projects/briefingRender.ts
+// byte-for-byte into ../private-janreimanncrm/src/modules/projects/briefingRender.ts
 // for the "What Claude sees" sheet, and both repos snapshot-test it against
-// the same fixtures in ../janreimanncrm/docs/superpowers/fixtures/.
+// the same fixtures in ../private-janreimanncrm/docs/superpowers/fixtures/.
 
 export type TimelineRow = {
   kind: "journal" | "task_created" | "task_completed" | "interaction" | "email" | "audio_recording" | "calendar_event" | "document";

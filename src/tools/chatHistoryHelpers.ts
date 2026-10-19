@@ -1,5 +1,5 @@
 // Shape of public.read_agent_chat_history() in the CRM database (migration
-// 20261105003600_stateless_chat_agents.sql in ../janreimanncrm). Tool calls
+// 20261105003600_stateless_chat_agents.sql in ../private-janreimanncrm). Tool calls
 // arrive without their output — only the ids found in it — and inputs already
 // cut to 200 characters there.
 export type HistoryToolCall = {
