@@ -420,7 +420,7 @@ export const oauthProvider: OAuthServerProvider = {
       scopes: [],
       expiresAt: parsed.exp,
       // Hieraus baut index.ts den Ctx — ab hier spricht jede Abfrage als dieser
-      // Nutzer, und die RLS des CRM erledigt die Mandantentrennung.
+      // Nutzer, und die RLS des CRM erledigt die Zugriffskontrolle.
       extra: { sub: parsed.sub, supabaseAccessToken: parsed.at },
     };
   },

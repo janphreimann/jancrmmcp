@@ -47,8 +47,8 @@ export const createEmailDraftSchema = z.object({
 export async function createEmailDraft(ctx: Ctx, args: z.infer<typeof createEmailDraftSchema>) {
   // Nur das eigene Postfach: ms_email_accounts hängt am Nutzer, nicht an der
   // Organisation, und filtert per RLS auf auth.uid(). Der Filter steht
-  // trotzdem explizit da — auch innerhalb einer Organisation soll niemand aus
-  // dem Postfach eines Kollegen schreiben.
+  // trotzdem explizit da — das CRM hat nur noch einen Nutzer, aber die
+  // Abfrage soll nicht davon abhängen, dass das so bleibt.
   let accountId: string;
   if (args.account_id) {
     const { data, error } = await ctx.db

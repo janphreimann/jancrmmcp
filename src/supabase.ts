@@ -17,8 +17,8 @@ export const supabaseAnonKey = SUPABASE_ANON_KEY;
  * Zwei begründete Verwendungen, beide dort dokumentiert:
  * - `ctx.admin` in Tools, für die entschlüsselten CalDAV-Zugangsdaten aus dem
  *   Vault (`get_caldav_accounts`, siehe context.ts). Jede Abfrage darüber muss
- *   selbst auf `ctx.userId` filtern — sonst greift sie auf die Postfächer und
- *   Kalender *aller* Organisationen zu.
+ *   selbst auf `ctx.userId` filtern — service_role sieht jede Zeile, unabhängig
+ *   davon, dass die Datenbank sonst nur den Owner durchlässt.
  * - `handleDevicePoll` in oauth.ts, um beim MCP-Device-Grant-Claim per
  *   `generateLink` + `verifyOtp` eine vom Browser-Tab unabhängige zweite
  *   Session für den bereits identifizierten Nutzer zu erzeugen (kein Mail-

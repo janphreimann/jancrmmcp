@@ -82,43 +82,53 @@ Typen neu erzeugen (`supabase gen types typescript --project-id <ref>`) und
 `../janreimanncrm/supabase/schema_export.sql` über
 `supabase/gen_schema_export.py` neu ziehen.
 
-## Mandantentrennung
+## Einzelnutzer-Betrieb
 
-Dieser Server bedient **alle** Nutzer aus einem Deployment. Wer fragt, steht
-ausschließlich im Bearer-Token; eine `ORGANIZATION_ID` aus der Umgebung gibt es
-nicht mehr.
+Das CRM ist eine **Einzelnutzer-Anwendung**: ein Owner, eine Organisation.
+Rollen, Einladungen, Join-Codes und Onboarding gibt es nicht mehr
+(`user_roles`, `user_directory`, `organization_invitations`,
+`organization_join_codes` sind entfernt), die Datenbank lässt jeden Zugriff
+nur für die User-ID des Owners durch. Dieser Server bedient damit genau diesen
+einen Nutzer. Wer fragt, steht trotzdem ausschließlich im Bearer-Token; eine
+`ORGANIZATION_ID` oder User-ID aus der Umgebung gibt es nicht.
 
 Die Kette:
 
 ```
-OAuth-Login (E-Mail + CRM-Passwort, src/oauth.ts)
+Device-Code-Login (src/oauth.ts)
   → Supabase-Sitzung, verschlüsselt im MCP-Token
   → buildContext() (src/context.ts) → Ctx { userId, orgId, db, admin }
   → jedes Tool bekommt ctx als erstes Argument
 ```
 
-`ctx.db` trägt das Access-Token des Nutzers, **RLS greift also genau wie im
-Browser** — die Trennung liegt in der Datenbank, nicht im Tool-Code. Daraus
-folgen drei Regeln:
+Ein Konto ohne Zeile in `users` (also jedes außer dem Owner) bricht schon in
+`buildContext()` mit "no access to the CRM" ab. Die Organisation bleibt als
+Datenmodell bestehen — `ctx.orgId` speist `p_org_id` der `search_*_smart`-RPCs,
+Routinen, Chief, Self-Management und das erste Segment der Storage-Pfade von
+Dokumenten.
 
-- Kein `.eq("organization_id", …)` mehr in Queries und kein `organization_id`
-  im Insert: Spalten-Default und `BEFORE INSERT`-Trigger setzen ihn aus
+`ctx.db` trägt das Access-Token des Nutzers, **RLS greift also genau wie im
+Browser** — die Zugriffskontrolle liegt in der Datenbank, nicht im Tool-Code.
+Daraus folgen drei Regeln:
+
+- Kein `.eq("organization_id", …)` in Queries und kein `organization_id` im
+  Insert: Spalten-Default und `BEFORE INSERT`-Trigger setzen ihn aus
   `auth.uid()`. Ein von Hand gesetzter Wert würde die Zuordnung wieder an den
   Aufrufer hängen.
-- Schreibende Tools prüfen `select("id")` auf ein leeres Ergebnis. Eine fremde
-  UUID trifft durch die Policy auf null Zeilen — ohne die Prüfung meldet das
-  Tool trotzdem Erfolg.
+- Schreibende Tools prüfen `select("id")` auf ein leeres Ergebnis. Eine
+  unbekannte UUID trifft durch die Policy auf null Zeilen — ohne die Prüfung
+  meldet das Tool trotzdem Erfolg.
 - Nutzergebundene Tabellen (`calendar_events`, `caldav_accounts`,
-  `ms_email_accounts`) filtern zusätzlich explizit auf `ctx.userId`. Innerhalb
-  einer Organisation lässt RLS sie zwar zu, aber aus dem Postfach eines
-  Kollegen zu schreiben wäre trotzdem falsch.
+  `ms_email_accounts`) filtern weiterhin explizit auf `ctx.userId`. Einen
+  Kollegen gibt es nicht mehr, aber die Abfrage soll nicht davon abhängen, dass
+  die Datenbank nur einen Nutzer kennt.
 
-`ctx.admin` (service_role, umgeht RLS) hat genau **eine** berechtigte
-Verwendung: `get_caldav_accounts(p_user_id)` liefert das entschlüsselte
-CalDAV-Passwort und ist für `authenticated` gesperrt. Der Parameter ist dort
-fest `ctx.userId` und darf nie aus den Tool-Argumenten stammen. Wer `ctx.admin`
-an einer weiteren Stelle braucht, begründet das hier — sonst ist `ctx.db`
-richtig.
+`ctx.admin` (service_role, umgeht RLS und damit auch die Bindung an den Owner)
+hat genau **eine** berechtigte Verwendung in Tools: `get_caldav_accounts(p_user_id)`
+liefert das entschlüsselte CalDAV-Passwort und ist für `authenticated`
+gesperrt. Der Parameter ist dort fest `ctx.userId` und darf nie aus den
+Tool-Argumenten stammen. Wer `ctx.admin` an einer weiteren Stelle braucht,
+begründet das hier — sonst ist `ctx.db` richtig.
 
 ## Leitplanken am Anmeldeprozess
 
@@ -185,7 +195,8 @@ columns — they only matter at creation time.
 - No GitHub Actions, CI workflows or GitHub secrets. Checks run locally before
   a push.
 - The CRM database (`lgmdjkjwiimyqkmyfnlt`) is changed via the Supabase
-  Management API from `../janreimanncrm` (see its CLAUDE.md). The Supabase MCP
+  Management API from `../private-janreimanncrm` (see its CLAUDE.md;
+  `../janreimanncrm` is the archived public variant). The Supabase MCP
   connector is scoped to another organization and cannot reach it.
 - Durable knowledge belongs in this repo: when Jan states a rule, decides
   something or corrects you, write it into this file in the same turn. Don't
