@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { agentMeta } from "../supabase.js";
 import type { Ctx } from "../context.js";
+import { chunk, contactIdsWithAllTags } from "./queryHelpers.js";
 
 export const searchContactsSchema = z.object({
   query: z.string().optional().describe("Fuzzy search across first name, last name and email — tolerates typos and word-order variants (e.g. 'Schiller Benjamin' or 'Beniamin Schiler')"),
@@ -10,65 +11,78 @@ export const searchContactsSchema = z.object({
   limit: z.number().int().min(1).max(100).default(25),
 });
 
+// The fuzzy RPC ranks inside the database and cuts at p_limit before any
+// filter could apply, so with a filter it is asked for its whole ranked list
+// (RANKED_POOL) and the filters run on that result in PostgREST — never on an
+// already cut top N in JS.
+const RANKED_POOL = 1000;
+
+type ContactRow = Record<string, unknown> & { id: string };
+
+function fromRpc(c: Record<string, unknown>): ContactRow {
+  return {
+    id: c.id as string,
+    first_name: c.first_name,
+    last_name: c.last_name,
+    email_1: c.email_1,
+    phone_1: c.phone_1,
+    job_title: c.job_title,
+    company_id: c.company_id,
+    companies: c.company_id ? { id: c.company_id, name: c.company_name } : null,
+    source: c.source,
+    match_score: c.match_score,
+  };
+}
+
 export async function searchContacts(ctx: Ctx, args: z.infer<typeof searchContactsSchema>) {
-  let contacts: Array<Record<string, unknown>>;
+  // Tags first: the contacts carrying every requested tag become an id filter
+  // of the main query (in chunks), so the limit applies after all filters.
+  const tagged = args.tag_ids?.length ? await contactIdsWithAllTags(ctx, args.tag_ids) : null;
+  if (tagged && tagged.size === 0) return [];
+  const idChunks: (string[] | null)[] = tagged ? chunk([...tagged]) : [null];
+  const filtered = !!(tagged || args.company_id || args.source);
 
-  if (args.query) {
-    const { data, error } = await ctx.db.rpc("search_contacts_smart", {
-      p_query: args.query,
-      p_org_id: ctx.orgId,
-      p_limit: args.limit,
-    });
-    if (error) throw new Error(error.message);
-
-    contacts = (data ?? []).map((c: Record<string, unknown>) => ({
-      id: c.id,
-      first_name: c.first_name,
-      last_name: c.last_name,
-      email_1: c.email_1,
-      phone_1: c.phone_1,
-      job_title: c.job_title,
-      company_id: c.company_id,
-      companies: c.company_id ? { id: c.company_id, name: c.company_name } : null,
-      source: c.source,
-      match_score: c.match_score,
-    }));
-
-    if (args.company_id) contacts = contacts.filter((c) => c.company_id === args.company_id);
-    if (args.source) contacts = contacts.filter((c) => c.source === args.source);
-  } else {
-    let q = ctx.db
-      .from("contacts")
-      .select(
-        "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, companies:company_id(id, name)"
-      )
-      .is("deleted_at", null)
-      .order("last_name")
-      .limit(args.limit);
-
-    if (args.company_id) q = q.eq("company_id", args.company_id);
-    if (args.source) q = q.eq("source", args.source);
-
-    const { data, error } = await q;
-    if (error) throw new Error(error.message);
-    contacts = data ?? [];
+  const rows: ContactRow[] = [];
+  for (const ids of idChunks) {
+    if (args.query) {
+      let q = ctx.db
+        .rpc("search_contacts_smart", {
+          p_query: args.query,
+          p_org_id: ctx.orgId,
+          p_limit: filtered ? RANKED_POOL : args.limit,
+        })
+        .order("match_score", { ascending: false })
+        .limit(args.limit);
+      if (ids) q = q.in("id", ids);
+      if (args.company_id) q = q.eq("company_id", args.company_id);
+      if (args.source) q = q.eq("source", args.source);
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      rows.push(...((data ?? []) as Record<string, unknown>[]).map(fromRpc));
+    } else {
+      let q = ctx.db
+        .from("contacts")
+        .select(
+          "id, first_name, last_name, email_1, phone_1, job_title, company_id, source, companies:company_id(id, name)"
+        )
+        .is("deleted_at", null)
+        .order("last_name")
+        .limit(args.limit);
+      if (ids) q = q.in("id", ids);
+      if (args.company_id) q = q.eq("company_id", args.company_id);
+      if (args.source) q = q.eq("source", args.source);
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      rows.push(...((data ?? []) as ContactRow[]));
+    }
   }
 
-  if (args.tag_ids && args.tag_ids.length > 0) {
-    const { data: tagLinks } = await ctx.db
-      .from("contact_tags")
-      .select("contact_id, tag_id")
-      .in("tag_id", args.tag_ids);
-
-    const tagCount: Record<string, number> = {};
-    (tagLinks ?? []).forEach((l: { contact_id: string; tag_id: string }) => {
-      tagCount[l.contact_id] = (tagCount[l.contact_id] || 0) + 1;
-    });
-    const required = args.tag_ids.length;
-    contacts = contacts.filter((c) => (tagCount[c.id as string] || 0) >= required);
+  // Only several id chunks need merging; one request is already in order.
+  if (idChunks.length > 1) {
+    if (args.query) rows.sort((a, b) => Number(b.match_score) - Number(a.match_score));
+    else rows.sort((a, b) => String(a.last_name ?? "").localeCompare(String(b.last_name ?? "")));
   }
-
-  return contacts;
+  return rows.slice(0, args.limit);
 }
 
 export const getContactSchema = z.object({
@@ -138,9 +152,15 @@ export async function createContact(ctx: Ctx, args: z.infer<typeof createContact
   if (error) throw new Error(error.message);
 
   if (tag_ids && tag_ids.length > 0) {
-    await ctx.db
+    const { error: tagError } = await ctx.db
       .from("contact_tags")
       .insert(tag_ids.map((tid) => ({ contact_id: data.id, tag_id: tid })));
+    if (tagError) {
+      // All or nothing, like create_note: a contact without the tags it was
+      // asked for, reported as success, is worse than an error to retry.
+      await ctx.db.from("contacts").delete().eq("id", data.id);
+      throw new Error(`Contact not created — the tags could not be added: ${tagError.message}`);
+    }
   }
   return { id: data.id, message: "Contact created successfully" };
 }

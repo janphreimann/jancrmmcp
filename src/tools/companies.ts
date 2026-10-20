@@ -10,16 +10,20 @@ export const searchCompaniesSchema = z.object({
 
 export async function searchCompanies(ctx: Ctx, args: z.infer<typeof searchCompaniesSchema>) {
   if (args.query) {
-    const { data, error } = await ctx.db.rpc("search_companies_smart", {
-      p_query: args.query,
-      p_org_id: ctx.orgId,
-      p_limit: args.limit,
-    });
+    // With a filter the RPC hands over its whole ranked list and PostgREST
+    // filters and cuts it — filtering an already cut top N lost matches.
+    let q = ctx.db
+      .rpc("search_companies_smart", {
+        p_query: args.query,
+        p_org_id: ctx.orgId,
+        p_limit: args.industry ? 1000 : args.limit,
+      })
+      .order("match_score", { ascending: false })
+      .limit(args.limit);
+    if (args.industry) q = q.eq("industry", args.industry);
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
-
-    let companies: Array<Record<string, unknown>> = data ?? [];
-    if (args.industry) companies = companies.filter((c) => c.industry === args.industry);
-    return companies;
+    return data ?? [];
   }
 
   let q = ctx.db
@@ -97,9 +101,14 @@ export async function createCompany(ctx: Ctx, args: z.infer<typeof createCompany
   if (error) throw new Error(error.message);
 
   if (tag_ids && tag_ids.length > 0) {
-    await ctx.db
+    const { error: tagError } = await ctx.db
       .from("company_tags")
       .insert(tag_ids.map((tid) => ({ company_id: data.id, tag_id: tid })));
+    if (tagError) {
+      // All or nothing, like create_contact.
+      await ctx.db.from("companies").delete().eq("id", data.id);
+      throw new Error(`Company not created — the tags could not be added: ${tagError.message}`);
+    }
   }
   return { id: data.id, message: "Company created successfully" };
 }
