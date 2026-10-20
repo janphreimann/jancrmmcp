@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { agentMeta } from "../supabase.js";
 import type { Ctx } from "../context.js";
+import { berlinToIso, nextDay } from "../berlinTime.js";
+import { orTerm } from "./queryHelpers.js";
 
 // Calendar events live on an external CalDAV server (GMX/iCloud/…); the
 // `calendar_events` table is only a sync mirror. Creating an event therefore
@@ -290,4 +292,78 @@ export async function createCalendarEvent(ctx: Ctx, args: z.infer<typeof createC
     end_at: event.end_at,
     message: `Event "${args.title}" created in calendar "${calendar.name}"`,
   };
+}
+
+// ─── list_calendar_events ───────────────────────────────────────────────────
+// Reads the mirror (calendar_events), bound to the user: RLS filters on
+// auth.uid() and the query on ctx.userId explicitly (CLAUDE.md). Recurring
+// events are stored once, as their first occurrence with the RRULE — the
+// mirror does not expand them, so a series that started before the range is
+// returned with `recurring: true` and its rule.
+
+/** Longest range list_calendar_events reads at once, in days. */
+export const CALENDAR_RANGE_MAX_DAYS = 92;
+
+export const listCalendarEventsSchema = z.object({
+  from: z.string().describe("Start of the range: YYYY-MM-DD (Berlin) or ISO timestamp"),
+  to: z.string().describe(`End of the range, inclusive day: YYYY-MM-DD (Berlin) or ISO timestamp; at most ${CALENDAR_RANGE_MAX_DAYS} days after from`),
+  search: z.string().max(200).optional().describe("Text in title, description or location"),
+  limit: z.number().int().min(1).max(100).default(50),
+});
+
+function rangeBound(value: string, edge: "from" | "to"): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return berlinToIso(edge === "from" ? value : nextDay(value));
+  const t = Date.parse(value);
+  if (Number.isNaN(t)) throw new Error(`"${value}" is not a date (YYYY-MM-DD) or ISO timestamp.`);
+  return new Date(t).toISOString();
+}
+
+/** The validated, half-open [from, to) range of a list_calendar_events call. */
+export function calendarRange(args: { from: string; to: string }): { from: string; to: string } {
+  const from = rangeBound(args.from, "from");
+  const to = rangeBound(args.to, "to");
+  if (Date.parse(to) <= Date.parse(from)) throw new Error("`to` must be after `from`.");
+  if (Date.parse(to) - Date.parse(from) > CALENDAR_RANGE_MAX_DAYS * 86_400_000) {
+    throw new Error(`Range too long — at most ${CALENDAR_RANGE_MAX_DAYS} days per call.`);
+  }
+  return { from, to };
+}
+
+/**
+ * The one or() filter of list_calendar_events: events overlapping [from, to),
+ * plus recurring series that started before `to` (their occurrences are not
+ * stored) — and, with a search term (stripped by orTerm), a text match in
+ * title, description or location. One filter string instead of two or()
+ * calls, so the AND between them is explicit.
+ */
+export function calendarFilter(range: { from: string; to: string }, term: string): string {
+  const overlap = `or(and(start_at.lt.${range.to},end_at.gt.${range.from}),and(rrule.not.is.null,start_at.lt.${range.to}))`;
+  if (!term) return overlap.slice(3, -1);
+  return `and(${overlap},or(summary.ilike.%${term}%,description.ilike.%${term}%,location.ilike.%${term}%))`;
+}
+
+export async function listCalendarEvents(ctx: Ctx, args: z.infer<typeof listCalendarEventsSchema>) {
+  const range = calendarRange(args);
+  const q = ctx.db
+    .from("calendar_events")
+    .select("id, summary, description, location, start_at, end_at, all_day, calendar_name, status, rrule")
+    .eq("user_id", ctx.userId)
+    .or(calendarFilter(range, args.search ? orTerm(args.search) : ""))
+    .order("start_at", { ascending: true })
+    .limit(args.limit ?? 50);
+
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((e) => ({
+    id: e.id,
+    title: e.summary,
+    start_at: e.start_at,
+    end_at: e.end_at,
+    ...(e.all_day ? { all_day: true } : {}),
+    ...(e.location ? { location: e.location } : {}),
+    ...(e.description ? { description: e.description.length > 300 ? `${e.description.slice(0, 300)}…` : e.description } : {}),
+    calendar: e.calendar_name,
+    ...(e.status && e.status !== "confirmed" ? { status: e.status } : {}),
+    ...(e.rrule ? { recurring: true, rrule: e.rrule } : {}),
+  }));
 }

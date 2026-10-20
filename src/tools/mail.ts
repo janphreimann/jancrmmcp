@@ -1,183 +1,183 @@
 import { z } from "zod";
-import { supabaseUrl } from "../supabase.js";
 import type { Ctx } from "../context.js";
+import { callEdgeFunction } from "./edge.js";
+import { orTerm } from "./queryHelpers.js";
+import { berlinToIso, nextDay } from "../berlinTime.js";
 
-// PostgREST's or() splits on commas and parentheses, and reads * as a
-// wildcard — a search term must never add filter clauses of its own.
-function orTerm(value: string): string {
-  return value.replace(/[,()%*"\\]/g, " ").trim();
-}
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Löst account_id wie createEmailDraft auf: eigene Konten nur, ms_email_accounts
- * hängt am Nutzer und nicht an der Organisation. Ohne account_id gewinnt das
- * als "default" markierte Konto, sonst das älteste.
+ * The caller's own mail accounts. ms_email_accounts is bound to the user, not
+ * the organization; RLS filters on auth.uid() as well, the explicit
+ * `user_id = ctx.userId` keeps the query from depending on there being one
+ * user. With `accountId`, only that one (and only if it is the caller's).
  */
-async function resolveAccountId(ctx: Ctx, accountId: string | undefined): Promise<string> {
-  if (accountId) {
-    const { data, error } = await ctx.db
-      .from("ms_email_accounts")
-      .select("id")
-      .eq("id", accountId)
-      .eq("user_id", ctx.userId)
-      .maybeSingle();
-    if (error || !data) throw new Error(`Email account ${accountId} not found.`);
-    return data.id;
-  }
-
-  const { data, error } = await ctx.db
+async function ownAccountIds(ctx: Ctx, accountId?: string): Promise<string[]> {
+  let q = ctx.db
     .from("ms_email_accounts")
     .select("id")
     .eq("user_id", ctx.userId)
     .order("is_default", { ascending: false })
-    .order("created_at", { ascending: true })
-    .limit(1);
-  if (error || !data?.length) throw new Error("No email account configured. Add one in the CRM settings.");
-  return data[0].id;
+    .order("created_at", { ascending: true });
+  if (accountId) q = q.eq("id", accountId);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  const ids = (data ?? []).map((r: { id: string }) => r.id);
+  if (accountId && !ids.length) throw new Error(`Email account ${accountId} not found.`);
+  if (!ids.length) throw new Error("No email account configured. Add one in the CRM settings.");
+  return ids;
 }
 
 export const createEmailDraftSchema = z.object({
   to: z.array(z.string()).optional().default([]).describe("Recipient email addresses"),
   cc: z.array(z.string()).optional().default([]).describe("CC email addresses"),
-  subject: z.string().optional().default("").describe("Email subject"),
+  subject: z.string().optional().default("").describe("Email subject (with reply_to: leave empty for \"Re: <original>\")"),
   body_html: z.string().optional().default("").describe("Email body — plain text or HTML"),
-  account_id: z.string().uuid().optional().describe("Email account UUID — omit to use the default account"),
+  account_id: z.string().uuid().optional().describe("Email account UUID — omit for the default account (with reply_to: the account the original arrived in)"),
+  reply_to: z.string().uuid().optional().describe(
+    "Email id (list_emails/get_email) to answer: threading headers, the \"Re:\" subject and the original's sender as recipient are set from it; to/cc you pass are added"
+  ),
+  reply_all: z.boolean().optional().default(false).describe("With reply_to: also address everyone else on the original (To → To, Cc → Cc)"),
+  quote_original: z.boolean().optional().default(false).describe("With reply_to: quote the original's text below yours"),
 });
 
-export async function createEmailDraft(ctx: Ctx, args: z.infer<typeof createEmailDraftSchema>) {
-  // Nur das eigene Postfach: ms_email_accounts hängt am Nutzer, nicht an der
-  // Organisation, und filtert per RLS auf auth.uid(). Der Filter steht
-  // trotzdem explizit da — das CRM hat nur noch einen Nutzer, aber die
-  // Abfrage soll nicht davon abhängen, dass das so bleibt.
-  let accountId: string;
-  if (args.account_id) {
-    const { data, error } = await ctx.db
-      .from("ms_email_accounts")
-      .select("id")
-      .eq("id", args.account_id)
-      .eq("user_id", ctx.userId)
-      .maybeSingle();
-    if (error || !data) throw new Error(`Email account ${args.account_id} not found.`);
-    accountId = data.id;
-  } else {
-    const { data, error } = await ctx.db
-      .from("ms_email_accounts")
-      .select("id")
-      .eq("user_id", ctx.userId)
-      .order("is_default", { ascending: false })
-      .order("created_at", { ascending: true })
-      .limit(1);
-    if (error || !data?.length) throw new Error("No email account configured. Add one in the CRM settings.");
-    accountId = data[0].id;
-  }
-
-  const payload = {
-    account_id: accountId,
-    to: args.to,
-    cc: args.cc,
-    subject: args.subject,
-    body_html: args.body_html,
+/**
+ * What goes to mail-create-draft. Only references the original by id — the
+ * edge function loads it with the caller's token and builds In-Reply-To,
+ * References, subject and recipients itself; no header comes from here.
+ */
+export function draftPayload(args: z.infer<typeof createEmailDraftSchema>, accountId: string | undefined) {
+  const payload: Record<string, unknown> = {
+    to: args.to ?? [],
+    cc: args.cc ?? [],
+    subject: args.subject ?? "",
+    body_html: args.body_html ?? "",
   };
-
-  // Retry once on 503 — platform-level gateway errors (cold-start crash, transient
-  // overload) return a fast 503 with HTML before the function code even runs.
-  // A single retry after 2 s resolves these reliably without hiding real failures.
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-    let resp: Response;
-    try {
-      // Mit dem JWT des Nutzers, nicht mit dem Service-Key: die Edge Function
-      // löst das Konto dann selbst über auth.uid() auf und akzeptiert keine
-      // fremde account_id mehr.
-      resp = await fetch(`${supabaseUrl}/functions/v1/mail-create-draft`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${ctx.accessToken}`,
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-
-    if (resp.status === 503) {
-      if (attempt === 1) {
-        await new Promise((r) => setTimeout(r, 2_000));
-        continue;
-      }
-      // Both attempts got 503 — platform-level failure, empty body, no JSON to parse.
-      const preview = (await resp.text()).slice(0, 200).trim();
-      throw new Error(
-        preview
-          ? `Edge function returned non-JSON (HTTP 503): ${preview}`
-          : "Edge function returned 503 on both attempts — Supabase platform may be degraded"
-      );
-    }
-
-    const rawText = await resp.text();
-    let result: { appended?: boolean; queued?: boolean; folder?: string; error?: string };
-    try {
-      result = JSON.parse(rawText);
-    } catch {
-      throw new Error(`Edge function returned non-JSON (HTTP ${resp.status}): ${rawText.slice(0, 200)}`);
-    }
-    // No retry on IMAP-level errors here: the edge function already retries
-    // internally and falls back to a server-side draft queue. Extra retries
-    // from this side only feed the mail provider's login rate limiting.
-    if (!resp.ok || result.error) throw new Error(result.error ?? `Edge function HTTP ${resp.status}`);
-
-    if (result.queued) {
-      return {
-        success: true,
-        queued: true,
-        account_id: accountId,
-        message:
-          `Draft accepted. The mail provider is currently rate-limiting connections, so the draft ` +
-          `was queued server-side and will appear in "${result.folder}" automatically ` +
-          `(usually within seconds, at most ~5 minutes). No action needed — do not retry.`,
-      };
-    }
-
-    return {
-      success: true,
-      folder: result.folder,
-      account_id: accountId,
-      message: `Draft saved to "${result.folder}"`,
-    };
+  if (accountId) payload.account_id = accountId;
+  if (args.reply_to) {
+    payload.reply_to = args.reply_to;
+    payload.reply_all = args.reply_all ?? false;
+    payload.quote_original = args.quote_original ?? false;
+  } else if (args.reply_all || args.quote_original) {
+    throw new Error("reply_all and quote_original need reply_to (the id of the mail you answer).");
   }
-
-  throw new Error("Edge function returned 503 on both attempts — Supabase platform may be degraded");
+  return payload;
 }
 
+export async function createEmailDraft(ctx: Ctx, args: z.infer<typeof createEmailDraftSchema>) {
+  // Own accounts only. A reply without account_id goes out of the account the
+  // original arrived in — the edge function resolves that from the message.
+  const accountId = args.account_id
+    ? (await ownAccountIds(ctx, args.account_id))[0]
+    : args.reply_to ? undefined : (await ownAccountIds(ctx))[0];
+
+  const { ok, status, json: result } = await callEdgeFunction<{
+    appended?: boolean; queued?: boolean; folder?: string; error?: string;
+    account_id?: string; to?: string[]; cc?: string[]; subject?: string;
+  }>(ctx, "mail-create-draft", draftPayload(args, accountId));
+  // No retry on IMAP-level errors here: the edge function already retries
+  // internally and falls back to a server-side draft queue. Extra retries
+  // from this side only feed the mail provider's login rate limiting.
+  if (!ok || result.error) throw new Error(result.error ?? `Edge function HTTP ${status}`);
+
+  const usedAccount = result.account_id ?? accountId;
+  const reply = args.reply_to ? { to: result.to, cc: result.cc, subject: result.subject } : {};
+  if (result.queued) {
+    return {
+      success: true,
+      queued: true,
+      account_id: usedAccount,
+      ...reply,
+      message:
+        `Draft accepted. The mail provider is currently rate-limiting connections, so the draft ` +
+        `was queued server-side and will appear in "${result.folder}" automatically ` +
+        `(usually within seconds, at most ~5 minutes). No action needed — do not retry.`,
+    };
+  }
+  return { success: true, folder: result.folder, account_id: usedAccount, ...reply, message: `Draft saved to "${result.folder}"` };
+}
+
+/** Longest window list_emails accepts for a date range, in days. */
+export const EMAIL_RANGE_MAX_DAYS = 366;
+
 export const listEmailsSchema = z.object({
-  account_id: z.string().uuid().optional().describe("Email account UUID — omit to use the default account"),
-  folder: z.string().optional().describe("Folder name (e.g. 'INBOX', 'Sent') or folder UUID — omit to search all folders of the account"),
-  search: z.string().optional().describe("Matches subject, sender name or sender address (case-insensitive substring)"),
+  search: z.string().max(200).optional().describe(
+    "Full-text search in subject and body (every word must occur; word prefixes match: \"angeb\" finds \"Angebot\")"
+  ),
+  account_id: z.string().uuid().optional().describe("Only this account — omit to search all of your accounts"),
+  folder: z.string().optional().describe("Folder name (e.g. 'INBOX', 'Sent') or folder UUID; needs account_id when given by name"),
+  from: z.string().optional().describe("Received on/after this date (YYYY-MM-DD, Berlin) or ISO timestamp"),
+  to: z.string().optional().describe("Received on/before this date (YYYY-MM-DD, whole day, Berlin) or ISO timestamp"),
+  contact_id: z.string().uuid().optional().describe("Only mails from/to this contact's email addresses"),
+  thread: z.string().optional().describe(
+    "A thread_key from an earlier result, or an email id: returns that whole conversation, oldest first"
+  ),
   unread_only: z.boolean().optional().default(false),
   limit: z.number().int().min(1).max(50).default(20),
 });
 
-export async function listEmails(ctx: Ctx, args: z.infer<typeof listEmailsSchema>) {
-  const accountId = await resolveAccountId(ctx, args.account_id);
+/**
+ * A date-only bound is a Berlin calendar day (`to` includes that whole day:
+ * the bound is the next midnight, exclusive); anything else must parse as a
+ * timestamp.
+ */
+export function emailRangeBound(value: string, edge: "from" | "to"): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return berlinToIso(edge === "from" ? value : nextDay(value));
+  const t = Date.parse(value);
+  if (Number.isNaN(t)) throw new Error(`"${value}" is not a date (YYYY-MM-DD) or ISO timestamp.`);
+  return new Date(t).toISOString();
+}
 
-  let folderId: string | undefined;
+/**
+ * Arguments for search_emails() (CRM migration 20261107006400, SECURITY
+ * INVOKER: the caller's RLS applies). Every filter runs in SQL, before the
+ * limit; the account list is the caller's own (user_id = ctx.userId).
+ */
+export function searchEmailsArgs(args: z.infer<typeof listEmailsSchema>, accountIds: string[], folderId: string | null) {
+  const from = args.from ? emailRangeBound(args.from, "from") : null;
+  const to = args.to ? emailRangeBound(args.to, "to") : null;
+  if (from && to && from > to) throw new Error("`from` is after `to`.");
+  if (from && to && Date.parse(to) - Date.parse(from) > EMAIL_RANGE_MAX_DAYS * 86_400_000) {
+    throw new Error(`Date range too long — at most ${EMAIL_RANGE_MAX_DAYS} days.`);
+  }
+  const thread = args.thread?.trim() || null;
+  const search = args.search?.trim() || null;
+  return {
+    p_account_ids: accountIds,
+    p_query: search,
+    p_folder_id: folderId,
+    p_from: from,
+    p_to: to,
+    p_contact_id: args.contact_id ?? null,
+    p_thread: thread && !UUID_RE.test(thread) ? thread : null,
+    p_thread_message_id: thread && UUID_RE.test(thread) ? thread : null,
+    p_unread_only: args.unread_only ?? false,
+    p_limit: args.limit ?? 20,
+  };
+}
+
+type EmailRow = {
+  id: string; account_id: string; subject: string | null; from_name: string | null; from_address: string | null;
+  to_addresses: string[] | null; preview: string | null; received_at: string | null; is_read: boolean;
+  has_attachments: boolean; direction: string | null; thread_key: string;
+};
+
+export async function listEmails(ctx: Ctx, args: z.infer<typeof listEmailsSchema>) {
+  const accountIds = await ownAccountIds(ctx, args.account_id);
+
+  let folderId: string | null = null;
   if (args.folder) {
-    // UUID durchreichen, sonst per Name innerhalb des Kontos auflösen — nie
-    // kontoübergreifend, sonst könnte ein Name aus dem Konto eines anderen
-    // Nutzers eine fremde folder_id liefern (die RLS unten fängt das zwar
-    // ohnehin ab, aber so bleibt "unbekannter Ordner" eine klare Meldung).
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.folder);
-    if (isUuid) {
+    if (UUID_RE.test(args.folder)) {
       folderId = args.folder;
     } else {
+      // By name only within one account: "INBOX" exists in each of them.
+      if (!args.account_id) throw new Error("A folder by name needs account_id (or pass the folder UUID).");
+      const term = orTerm(args.folder);
       const { data, error } = await ctx.db
         .from("email_folders")
         .select("id")
-        .eq("account_id", accountId)
-        .or(`name.ilike.%${orTerm(args.folder)}%,display_name.ilike.%${orTerm(args.folder)}%`)
+        .eq("account_id", accountIds[0])
+        .or(`name.ilike.%${term}%,display_name.ilike.%${term}%`)
         .limit(1);
       if (error) throw new Error(error.message);
       if (!data?.length) throw new Error(`Folder "${args.folder}" not found in this account.`);
@@ -185,32 +185,21 @@ export async function listEmails(ctx: Ctx, args: z.infer<typeof listEmailsSchema
     }
   }
 
-  let q = ctx.db
-    .from("email_messages")
-    .select("id, subject, from_name, from_address, body_preview, received_at, is_read, has_attachments, folder_id")
-    .eq("account_id", accountId)
-    .order("received_at", { ascending: false, nullsFirst: false })
-    .limit(args.limit);
-
-  if (folderId) q = q.eq("folder_id", folderId);
-  if (args.unread_only) q = q.eq("is_read", false);
-  if (args.search && orTerm(args.search)) {
-    const term = `%${orTerm(args.search)}%`;
-    q = q.or(`subject.ilike.${term},from_name.ilike.${term},from_address.ilike.${term}`);
-  }
-
-  const { data, error } = await q;
+  const { data, error } = await ctx.db.rpc("search_emails", searchEmailsArgs(args, accountIds, folderId));
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((m) => ({
+  return ((data ?? []) as EmailRow[]).map((m) => ({
     id: m.id,
     subject: m.subject,
     from_name: m.from_name,
     from_address: m.from_address,
-    preview: m.body_preview,
+    ...(m.direction === "outbound" ? { to: m.to_addresses ?? [] } : {}),
+    preview: m.preview,
     received_at: m.received_at,
     is_read: m.is_read,
     has_attachments: m.has_attachments,
+    thread_key: m.thread_key,
+    ...(accountIds.length > 1 ? { account_id: m.account_id } : {}),
   }));
 }
 

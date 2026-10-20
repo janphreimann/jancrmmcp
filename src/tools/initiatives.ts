@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { agentMeta } from "../supabase.js";
 import type { Ctx } from "../context.js";
+import { escapeLike } from "./queryHelpers.js";
 
 export const searchInitiativesSchema = z.object({
   query: z.string().optional().describe("Case-insensitive substring match on the initiative name"),
@@ -14,7 +15,7 @@ export async function searchInitiatives(ctx: Ctx, args: z.infer<typeof searchIni
     .select("id, name, description, status, target_date, created_at")
     .order("created_at", { ascending: false })
     .limit(args.limit);
-  if (args.query) q = q.ilike("name", `%${args.query}%`);
+  if (args.query && escapeLike(args.query)) q = q.ilike("name", `%${escapeLike(args.query)}%`);
   if (args.status) q = q.eq("status", args.status);
   const { data, error } = await q;
   if (error) throw new Error(error.message);

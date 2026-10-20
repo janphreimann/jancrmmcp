@@ -2,6 +2,7 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import { agentMeta, supabaseAnonKey, supabaseUrl } from "../supabase.js";
 import type { Ctx } from "../context.js";
+import { orTerm } from "./queryHelpers.js";
 import { pageTranscript, TRANSCRIPT_PAGE_DEFAULT_CHARS, TRANSCRIPT_PAGE_MAX_CHARS } from "./audioRecordingHelpers.js";
 
 // ─── Folder tools ─────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ export const listDocumentsSchema = z.object({
   folder_id: z.string().uuid().optional().nullable().describe(
     "Filter by folder UUID. Pass null to list only root-level documents (no folder). Omit entirely to list all documents."
   ),
-  query: z.string().optional().describe("Search in file name or description"),
+  query: z.string().max(200).optional().describe("Search in file name, description and the document's extracted text (matches come with a short snippet)"),
   doc_type: z.string().optional().describe(
     "Filter by document type, e.g. 'transcript' for project meeting transcripts"
   ),
@@ -81,11 +82,8 @@ export async function listDocuments(ctx: Ctx, args: z.infer<typeof listDocuments
       q = q.eq("folder_id", args.folder_id);
     }
   }
-  if (args.query) {
-    // or() splits on commas/parentheses and reads * as a wildcard.
-    const term = args.query.replace(/[,()%*"\\]/g, " ").trim();
-    if (term) q = q.or(`file_name.ilike.%${term}%,description.ilike.%${term}%`);
-  }
+  const term = args.query ? orTerm(args.query) : "";
+  if (term) q = q.or(documentSearchFilter(term));
   if (args.doc_type) q = q.eq("doc_type", args.doc_type);
   if (args.contact_id) q = q.eq("contact_id", args.contact_id);
   if (args.company_id) q = q.eq("company_id", args.company_id);
@@ -93,7 +91,24 @@ export async function listDocuments(ctx: Ctx, args: z.infer<typeof listDocuments
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  return data ?? [];
+  const docs = data ?? [];
+  if (!term || !docs.length) return docs;
+
+  // The text itself never leaves the database: document_text_snippets()
+  // (SECURITY INVOKER, CRM migration 20261107006400) cuts a short window
+  // around the first hit for the documents of this page only.
+  const { data: snippets, error: snipErr } = await ctx.db.rpc("document_text_snippets", {
+    p_ids: docs.map((d) => d.id),
+    p_query: term,
+  });
+  if (snipErr) throw new Error(snipErr.message);
+  const byId = new Map(((snippets ?? []) as { id: string; snippet: string }[]).map((r) => [r.id, r.snippet]));
+  return docs.map((d) => (byId.has(d.id) ? { ...d, text_match: byId.get(d.id) } : d));
+}
+
+/** The or() filter of list_documents' text search; `term` has been through orTerm. */
+export function documentSearchFilter(term: string): string {
+  return `file_name.ilike.%${term}%,description.ilike.%${term}%,extracted_text.ilike.%${term}%`;
 }
 
 export const getDocumentContentSchema = z.object({

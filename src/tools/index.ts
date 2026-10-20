@@ -31,7 +31,12 @@ import {
   getTaskSchema, getTask,
   updateTaskSchema, updateTask,
 } from "./tasks.js";
-import { createCalendarEventSchema, createCalendarEvent } from "./calendar.js";
+import {
+  createCalendarEventSchema, createCalendarEvent,
+  listCalendarEventsSchema, listCalendarEvents,
+} from "./calendar.js";
+import { shareStatusSchema, shareStatus } from "./share.js";
+import { changesSinceSchema, changesSince } from "./changes.js";
 import {
   createEmailDraftSchema, createEmailDraft,
   listEmailsSchema, listEmails,
@@ -403,15 +408,36 @@ export function registerTools(mcp: McpServer, ctx: Ctx, profile: ToolProfile) {
 
 
   server.tool(
+    "list_calendar_events",
+    "The user's calendar events in a date range (at most 92 days), optionally filtered by text. Recurring series are listed once with their rule.",
+    listCalendarEventsSchema.shape,
+    async (args) => ok(await listCalendarEvents(ctx, args as Parameters<typeof listCalendarEvents>[1]))
+  );
+
+  server.tool(
+    "share_status",
+    "Share portal status for a contact (their access, the items shared with them) or a document (who has it), plus recent openings and comments. Read-only.",
+    shareStatusSchema.shape,
+    async (args) => ok(await shareStatus(ctx, args as Parameters<typeof shareStatus>[1]))
+  );
+
+  server.tool(
+    "changes_since",
+    "What is new or changed in the CRM since a point in time: contacts, companies, projects, tasks, notes, documents, interactions, mails, Share portal events and recordings — counts plus the newest items per area.",
+    changesSinceSchema.shape,
+    async (args) => ok(await changesSince(ctx, args as Parameters<typeof changesSince>[1]))
+  );
+
+  server.tool(
     "create_email_draft",
-    "Save an email draft to the Drafts folder via IMAP. To, CC, subject and body are all optional — useful for pre-filling a draft the user will finish later.",
+    "Save an email draft to the Drafts folder via IMAP — never sends. All fields optional. With reply_to (an email id) it becomes a threaded reply to that mail.",
     createEmailDraftSchema.shape,
     async (args) => ok(await createEmailDraft(ctx, args as Parameters<typeof createEmailDraft>[1]))
   );
 
   server.tool(
     "list_emails",
-    "List/search recent emails from the user's mailbox — compact results (subject, sender, preview, read status), not full bodies. Use get_email to fetch a full message.",
+    "Search the user's mail across all accounts: full text in subject and body, date range, a contact's mails, or one whole conversation (thread). Compact results (subject, sender, preview, thread_key), newest first; get_email for the full message.",
     listEmailsSchema.shape,
     async (args) => ok(await listEmails(ctx, args as Parameters<typeof listEmails>[1]))
   );
@@ -469,7 +495,7 @@ export function registerTools(mcp: McpServer, ctx: Ctx, profile: ToolProfile) {
 
   server.tool(
     "list_documents",
-    "List documents with optional filters (folder, doc_type, linked contact/company/project) and text search. Omit folder_id to get all, pass null to get root-level only. Use doc_type: 'transcript' to find project meeting transcripts and their auto-generated summaries.",
+    "List documents with optional filters (folder, doc_type, linked contact/company/project) and a text search that also looks inside the documents' text (hits come with a snippet). Omit folder_id to get all, pass null for root-level only. doc_type 'transcript' finds meeting transcripts.",
     listDocumentsSchema.shape,
     async (args) => ok(await listDocuments(ctx, args as Parameters<typeof listDocuments>[1]))
   );

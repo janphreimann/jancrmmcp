@@ -5,10 +5,20 @@ import type { Ctx } from "../context.js";
  * wildcards and `\` is LIKE's escape character, so all three are escaped;
  * PostgREST also reads `*` as `%` before Postgres sees the pattern, which no
  * escape survives — it is dropped. Not for `.or()` strings, which split on
- * commas and parentheses (those strip the term, see orTerm in mail.ts).
+ * commas and parentheses (those strip the term, see orTerm).
  */
 export function escapeLike(term: string): string {
   return term.replace(/\*/g, " ").replace(/[\\%_]/g, (c) => `\\${c}`).trim();
+}
+
+/**
+ * A user term inside a PostgREST `.or()` string: or() splits on commas and
+ * parentheses and reads `*` as a wildcard, so those (and `%`, quotes,
+ * backslashes) are stripped — a search term never adds filter clauses of its
+ * own.
+ */
+export function orTerm(value: string): string {
+  return value.replace(/[,()%*"\\]/g, " ").trim();
 }
 
 /** Ids per `.in("id", …)` request — keeps the URL well under PostgREST's limits. */
