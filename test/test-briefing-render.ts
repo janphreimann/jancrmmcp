@@ -96,4 +96,22 @@ const cappedMd = renderBriefing(capped, NOW);
 check("recordings: +N more hint", cappedMd.includes(`+3 more → list_project_timeline(project_id, kinds=["audio_recording"])`));
 check("events: +N more hint", cappedMd.includes(`+2 more → list_project_timeline(project_id, kinds=["calendar_event"])`));
 
+// 9. Share portal section (migration 20261107006300): own section, newest
+// first, "(new)" after the last visit, comment bodies clipped, refs resolve.
+const shareSection = md.split("## Share portal")[1]?.split("## Tools")[0] ?? "";
+check("share: section between Index and Tools", md.indexOf("## Share portal") > md.indexOf("## Index") && md.indexOf("## Share portal") < md.indexOf("## Tools"));
+check("share: one line per event", shareSection.split("\n").filter((l) => l.startsWith("- ")).length === rich.share_activity!.length);
+check("share: new since the last visit is marked", /Sabine Hartmann signed in \(new\)/.test(shareSection) && !/Markus Vogel signed out \(new\)/.test(shareSection));
+check("share: comment body clipped", /commented on "nordbau-integration-spec-v2\.pdf": Section 4\.2 .*… \(new\)/.test(shareSection));
+check("share: the user's own reply", shareSection.includes('The user replied to Markus Vogel on "Pilot feedback board"'));
+check("share: no share kind in the delta", !deltaSection.includes("signed in"));
+check("share: absent key renders no section (older database)", !empty.includes("## Share portal") && !("share_activity" in load("briefing-empty.json")));
+check("share: first visit marks nothing new", first.includes("## Share portal") && !first.includes("(new)"));
+const noShare: Briefing = JSON.parse(JSON.stringify(rich));
+noShare.share_activity = [];
+check("share: empty list renders no section", !renderBriefing(noShare, NOW).includes("## Share portal"));
+
+// 10. single user: no assignee on open tasks
+check("tasks: no assignee printed", !/· Jan Reimann \[task:/.test(md));
+
 if (failed) process.exit(1);

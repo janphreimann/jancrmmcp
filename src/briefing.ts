@@ -33,7 +33,7 @@ export type Briefing = {
   delta: TimelineRow[];
   delta_counts: Record<string, number>;
   open: {
-    tasks: { id: string; title: string; due_date: string | null; priority: string | null; status: string; assigned_to_name: string | null }[];
+    tasks: { id: string; title: string; due_date: string | null; priority: string | null; status: string }[];
     tasks_total: number;
     next_steps: { id: string; title: string; rationale: string; created_by_agent: boolean; created_at: string }[];
     unanswered_emails: { id: string; subject: string; from_name: string | null; from_address: string | null; received_at: string }[];
@@ -53,6 +53,21 @@ export type Briefing = {
     journal_total: number;
     pinned_journal: { id: string; entry_type: string; content: string; created_at: string; author_name: string | null }[];
   };
+  // Optional: a database from before migration 20261107006300 has no such
+  // key, and the briefing must still render.
+  share_activity?: ShareEvent[];
+};
+
+export type ShareEvent = {
+  id: string;
+  kind: "login" | "item_opened" | "password_set" | "logout" | "comment";
+  occurred_at: string;
+  contact_id: string;
+  contact_name: string | null;
+  item_title: string | null;
+  document_id: string | null;
+  author: "recipient" | "admin" | null;
+  body: string | null;
 };
 
 const DELTA_CAP = 30;
@@ -99,6 +114,29 @@ function clip(s: string, n: number): string {
 function ext(name: string): string {
   const m = name.match(/\.([a-z0-9]+)$/i);
   return m ? m[1].toLowerCase() : "file";
+}
+
+// What a person did in the Share portal, one line. A comment by "admin" is
+// the user's own reply in the thread.
+function shareLine(e: ShareEvent, since: string | null): string {
+  const who = e.contact_name?.trim() || "Someone";
+  const item = e.item_title?.trim() ? `"${clip(e.item_title, 80)}"` : "an item";
+  let what: string;
+  switch (e.kind) {
+    case "login": what = `${who} signed in`; break;
+    case "logout": what = `${who} signed out`; break;
+    case "password_set": what = `${who} set a password`; break;
+    case "item_opened": what = `${who} opened ${item}`; break;
+    case "comment": {
+      const head = e.author === "admin" ? `The user replied to ${who} on ${item}` : `${who} commented on ${item}`;
+      what = e.body?.trim() ? `${head}: ${clip(e.body, 200)}` : head;
+      break;
+    }
+    default: what = `${who}: ${String(e.kind)}`;
+  }
+  const isNew = since != null && Date.parse(e.occurred_at) > Date.parse(since);
+  const ref = e.document_id ? ` [document:${e.document_id}]` : "";
+  return `- ${minute(e.occurred_at)} ${what}${isNew ? " (new)" : ""}${ref}`;
 }
 
 function deltaLine(r: TimelineRow): string {
@@ -199,7 +237,7 @@ export function renderBriefing(b: Briefing, now: Date): string {
   if (b.open.tasks.length) {
     out.push(`Tasks (${b.open.tasks_total}):`);
     for (const t of b.open.tasks) {
-      const bits = [t.due_date ? `due ${day(t.due_date)}` : null, t.priority, t.assigned_to_name].filter(Boolean).join(" · ");
+      const bits = [t.due_date ? `due ${day(t.due_date)}` : null, t.priority].filter(Boolean).join(" · ");
       out.push(`- ${t.title}${bits ? " · " + bits : ""} [task:${t.id}]`);
     }
     if (b.open.tasks_total > b.open.tasks.length) out.push(`+${b.open.tasks_total - b.open.tasks.length} more → search_tasks(project_id)`);
@@ -263,6 +301,15 @@ export function renderBriefing(b: Briefing, now: Date): string {
       const by = [j.author_name, day(j.created_at)].filter(Boolean).join(", ");
       out.push(`> ${j.content.trim().replace(/\n/g, "\n> ")}${by ? `   (${by})` : ""}`);
     }
+  }
+
+  // ── share portal (what the project's people did there) ──
+  // Its own section, not part of the delta: project_timeline() deliberately
+  // has no Share kind. Omitted when there is nothing (or no such key).
+  const share = b.share_activity ?? [];
+  if (share.length) {
+    out.push("", `## Share portal (latest ${share.length}, newest first)`);
+    for (const e of share) out.push(shareLine(e, b.since));
   }
 
   // ── tools ──

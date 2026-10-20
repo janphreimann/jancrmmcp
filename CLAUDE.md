@@ -45,6 +45,28 @@ Interactions are intentionally **not** creatable via this server — logging a
 call/meeting/email as an interaction is a user-only action in the CRM UI.
 Do not add a `create_interaction` tool back without explicit sign-off.
 
+## Briefing renderer
+
+`src/briefing.ts` renders `get_project_briefing()` for `open_project` and is
+byte-identical to `../private-janreimanncrm/src/modules/projects/briefingRender.ts`
+(the CRM's Agent tab); both repos test it against the fixtures in
+`../private-janreimanncrm/docs/superpowers/fixtures/` — change both and the
+fixtures together. The "Share portal" section comes from the briefing's
+`share_activity` (CRM migration `20261107006300`); the renderer treats the
+key as optional, so this server and that migration deploy in either order.
+Share activity is never a `project_timeline()` kind.
+
+## Query rules
+
+- Wall-clock dates and times from tool arguments are Europe/Berlin
+  (`src/berlinTime.ts`), like the web app — the server itself runs in UTC.
+- Filters run in the query (PostgREST, also on `search_*_smart` results),
+  never in JS after `.limit()`; a filtered fuzzy search asks the RPC for its
+  whole ranked pool. User text in `.ilike()` goes through `escapeLike`, in
+  `.or()` through a stripping helper (`orTerm`).
+- A create tool whose link/tag insert fails rolls the new row back and
+  returns the error — never "created successfully" with half the links.
+
 ## Agent-provenance rule (always apply, no exceptions)
 
 Every row this server inserts into a user-facing CRM table must be
