@@ -3,8 +3,7 @@ import type { Ctx } from "../context.js";
 
 // The Chief's overview (CRM migration 20261107000000_chief_agent.sql). The
 // function is SECURITY INVOKER and this client carries the caller's token,
-// so RLS decides what is in it — system agents, the caller's own agents,
-// the caller's organization's projects and tasks.
+// so RLS decides what is in it — the owner's agents, projects and tasks.
 export const getOverviewSchema = z.object({}).strict();
 
 export async function getOverview(ctx: Ctx, _args: z.infer<typeof getOverviewSchema>) {
@@ -65,8 +64,8 @@ async function loadCallerChief(ctx: Ctx, agentId: string): Promise<{ id: string;
   return data as { id: string; tools: string[] };
 }
 
-// The user's own worker agents — never a system agent (they belong to the
-// whole organization), never a Chief. Foreign and nonexistent read the same.
+// The user's own worker agents — never a Chief. Foreign and nonexistent read
+// the same.
 async function loadOwnWorker(ctx: Ctx, targetId: string): Promise<{ id: string; name: string; managed_by: string | null }> {
   const { data, error } = await ctx.db
     .from("agents")
@@ -74,12 +73,11 @@ async function loadOwnWorker(ctx: Ctx, targetId: string): Promise<{ id: string; 
     .eq("id", targetId)
     .eq("organization_id", ctx.orgId)
     .eq("created_by", ctx.userId)
-    .eq("is_system", false)
     .eq("role", "worker")
     .is("deleted_at", null)
     .maybeSingle();
   if (error || !data) {
-    throw new Error(`Agent ${targetId} not found among the user's own agents. System agents belong to the whole organization — use them, never change them.`);
+    throw new Error(`Agent ${targetId} not found among the user's own agents.`);
   }
   return data as { id: string; name: string; managed_by: string | null };
 }
@@ -93,7 +91,7 @@ function assertManagedBy(target: { name: string; managed_by: string | null }, ch
 export const createAgentSchema = z.object({
   agent_id: z.string().uuid().describe("Your own (the Chief's) agent id"),
   name: z.string().trim().min(1).max(80).describe("Display name"),
-  job: z.string().trim().min(1).max(4000).describe("What this agent does — its standing instructions, written as a brief to a colleague. The first line becomes its card description."),
+  job: z.string().trim().min(1).max(4000).describe("What this agent does — its standing instructions, written as a brief to a new helper. The first line becomes its card description."),
   tools: z.array(z.string()).max(80).optional().describe("Full tool names (mcp__jan-crm__…). Omit to give it the same CRM tools you have."),
   temporary: z.boolean().optional().describe(`true for a one-off helper: it is removed automatically after expires_in_hours (default ${DEFAULT_TEMPORARY_HOURS})`),
   expires_in_hours: z.number().int().min(1).max(720).optional().describe("Remove the agent after this many hours"),

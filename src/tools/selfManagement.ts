@@ -10,19 +10,13 @@ import type { Ctx } from "../context.js";
 // (create_task etc.). Die eigene agent_id steht dem Agenten im fixen
 // System-Prompt zur Verfügung (siehe SELF_DEFINING_AGENT_SYSTEM_PROMPT in
 // der CRM-App).
-//
-// System agents (is_system — among them the CRM Assistant behind the
-// project chat) may write their memory but not rename themselves. The memory
-// half used to share the is_system = false filter, so every remember call of
-// a system agent answered "not found" although its prompt told it to use it.
-async function assertOwnOrgAgent(ctx: Ctx, agentId: string, opts: { allowSystem: boolean }): Promise<void> {
-  let q = ctx.db
+async function assertOwnOrgAgent(ctx: Ctx, agentId: string): Promise<void> {
+  const { data, error } = await ctx.db
     .from("agents")
     .select("id")
     .eq("id", agentId)
-    .eq("organization_id", ctx.orgId);
-  if (!opts.allowSystem) q = q.eq("is_system", false);
-  const { data, error } = await q.maybeSingle();
+    .eq("organization_id", ctx.orgId)
+    .maybeSingle();
   if (error || !data) throw new Error(`Agent ${agentId} not found in your organization.`);
 }
 
@@ -34,7 +28,7 @@ export const updateAgentProfileSchema = z.object({
 });
 
 export async function updateAgentProfile(ctx: Ctx, args: z.infer<typeof updateAgentProfileSchema>) {
-  await assertOwnOrgAgent(ctx, args.agent_id, { allowSystem: false });
+  await assertOwnOrgAgent(ctx, args.agent_id);
   const fields: Record<string, string> = {};
   if (args.name !== undefined) fields.name = args.name;
   if (args.color !== undefined) fields.color = args.color;
@@ -57,7 +51,7 @@ export const rememberSchema = z.object({
 });
 
 export async function remember(ctx: Ctx, args: z.infer<typeof rememberSchema>) {
-  await assertOwnOrgAgent(ctx, args.agent_id, { allowSystem: true });
+  await assertOwnOrgAgent(ctx, args.agent_id);
   const { error } = await ctx.db.from("agents").update({ memory: args.memory }).eq("id", args.agent_id);
   if (error) throw new Error(`Could not save memory: ${error.message}`);
   return { success: true, length: args.memory.length };
@@ -66,8 +60,8 @@ export async function remember(ctx: Ctx, args: z.infer<typeof rememberSchema>) {
 // ── remember_about_user ─────────────────────────────────────────────────────
 // What holds for the calling user across every project and every agent —
 // how they work, rules they gave, preferences. Keyed to the user, not to an
-// agent: agents.memory is seen by that one agent only, so a rule told to the
-// CRM Assistant was unknown to Claude on claude.ai. Reaches every agent at
+// agent: agents.memory is seen by that one agent only, so a rule told to one
+// in-app agent would stay unknown to Claude on claude.ai. Reaches every agent at
 // the start: the MCP server instructions (instructions.ts) and every in-app
 // chat turn. Deliberately not in the project briefing — it is not about a
 // project. The user reads and edits it in Settings → Prompts → About me. The row is the

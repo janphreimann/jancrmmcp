@@ -171,8 +171,8 @@ export async function createCalendarEvent(ctx: Ctx, args: z.infer<typeof createC
   // webapp's calendar selector uses — there is no dedicated calendars table).
   // Nur die Kalender des Aufrufers: calendar_events hängt am Nutzer, nicht an
   // der Organisation, und filtert per RLS auf auth.uid(). Der Filter steht
-  // trotzdem explizit da — ein Termin im Kalender eines Kollegen wäre auch
-  // innerhalb einer Organisation falsch.
+  // trotzdem explizit da — die Abfrage soll nicht davon abhängen, dass die
+  // Datenbank nur einen Nutzer kennt (CLAUDE.md, Einzelnutzer-Betrieb).
   const { data: calRows, error: calErr } = await ctx.db
     .from("calendar_events")
     .select("calendar_name, calendar_url")

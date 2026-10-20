@@ -7,7 +7,6 @@ async function assertOwnOrgAgent(ctx: Ctx, agentId: string): Promise<void> {
     .select("id")
     .eq("id", agentId)
     .eq("organization_id", ctx.orgId)
-    .eq("is_system", false)
     .maybeSingle();
   if (error || !data) throw new Error(`Agent ${agentId} not found in your organization.`);
 }

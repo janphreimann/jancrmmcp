@@ -21,7 +21,7 @@ function check(name: string, ok: boolean, detail?: string) {
 const CHIEF = "11111111-1111-4111-8111-111111111111";
 const MANAGED = "22222222-2222-4222-8222-222222222222";
 const OWN = "33333333-3333-4333-8333-333333333333";
-const SYSTEM = "44444444-4444-4444-8444-444444444444";
+const UNKNOWN = "44444444-4444-4444-8444-444444444444";
 const P = "mcp__jan-crm__";
 
 type Op = { table: string; action: "select" | "insert" | "update"; filters: Record<string, unknown>; values?: any; head?: boolean };
@@ -30,13 +30,12 @@ let rpcs: Array<{ fn: string; args: any }> = [];
 let rpcResult: { data: unknown; error: unknown } = { data: null, error: null };
 
 // What the user's own token would see: the Chief, one agent it created, one
-// the user built. The system agent is visible (RLS) but never matches the
-// own-worker filters below.
+// the user built. There are no system agents any more (CRM migrations
+// 20261107005800/005900).
 const agents: Record<string, any> = {
   [CHIEF]: { id: CHIEF, role: "chief", created_by: "u1", is_system: false, managed_by: null, deleted_at: null, organization_id: "o1", name: "Chief", tools: [`${P}search_contacts`, `${P}get_overview`, `${P}remember`, "Bash"] },
   [MANAGED]: { id: MANAGED, role: "worker", created_by: "u1", is_system: false, managed_by: CHIEF, deleted_at: null, organization_id: "o1", name: "Helper", tools: [] },
   [OWN]: { id: OWN, role: "worker", created_by: "u1", is_system: false, managed_by: null, deleted_at: null, organization_id: "o1", name: "Mine", tools: ["Bash"] },
-  [SYSTEM]: { id: SYSTEM, role: "worker", created_by: null, is_system: true, managed_by: null, deleted_at: null, organization_id: "o1", name: "Sys", tools: [] },
 };
 
 function answer(op: Op): { data: unknown; error: unknown; count?: number } {
@@ -111,8 +110,8 @@ check("create_agent defaults to the Chief's CRM tools minus the manager tools",
 const hours = ins ? (Date.parse(ins.values.expires_at) - Date.now()) / 3_600_000 : 0;
 check("temporary without hours expires in 48h", hours > 47.9 && hours < 48.1, String(hours));
 
-r = await call("update_agent", { agent_id: CHIEF, target_agent_id: SYSTEM, name: "Hacked" });
-check("update_agent refuses a system agent", r.isError && /not found/.test(r.text) && writes().length === 0, r.text);
+r = await call("update_agent", { agent_id: CHIEF, target_agent_id: UNKNOWN, name: "Hacked" });
+check("update_agent refuses an agent it cannot see", r.isError && /not found/.test(r.text) && writes().length === 0, r.text);
 
 r = await call("update_agent", { agent_id: CHIEF, target_agent_id: OWN, job: "New job" });
 check("update_agent refuses re-tasking the user's own agent", r.isError && /set up by the user/.test(r.text) && writes().length === 0, r.text);
@@ -154,10 +153,12 @@ check("read_chat_history: an invisible agent is 'not found' and the RPC is not c
   r.isError && /not found/.test(r.text) && rpcs.length === 0, r.text);
 
 const delegateDescription = (await client.listTools()).tools.find((t) => t.name === "delegate")?.description ?? "";
-check("delegate warns that a system agent's thread is visible to the whole organization",
-  /visible to the whole organization/.test(delegateDescription)
-  && /never put the user's private mail content or personal details into a task for a system agent/.test(delegateDescription)
-  && /one of the user's own agents/.test(delegateDescription), delegateDescription);
+check("delegate no longer talks about system agents (single-user CRM, none left)",
+  delegateDescription.length > 0 && !/system agent|whole organization/i.test(delegateDescription), delegateDescription);
+for (const name of ["update_agent", "delete_agent"]) {
+  const d = (await client.listTools()).tools.find((t) => t.name === name)?.description ?? "";
+  check(`${name} no longer mentions system agents`, d.length > 0 && !/system agent/i.test(d), d);
+}
 
 // ── Standing orders and proposals ─────────────────────────────────────────
 const SO = "66666666-6666-4666-8666-666666666666";

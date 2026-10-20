@@ -57,7 +57,7 @@ export const listDocumentsSchema = z.object({
   ),
   query: z.string().optional().describe("Search in file name or description"),
   doc_type: z.string().optional().describe(
-    "Filter by document type, e.g. 'transcript' for project meeting transcripts or 'agent_index' for internal agent indexes"
+    "Filter by document type, e.g. 'transcript' for project meeting transcripts"
   ),
   contact_id: z.string().uuid().optional().describe("Filter to documents linked to this contact"),
   company_id: z.string().uuid().optional().describe("Filter to documents linked to this company"),
