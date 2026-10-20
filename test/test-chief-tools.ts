@@ -89,6 +89,8 @@ const names = (await client.listTools()).tools.map((t) => t.name);
 for (const n of ["create_agent", "update_agent", "pause_agent", "delete_agent", "delegate"]) {
   check(`${n} is registered`, names.includes(n));
 }
+// The Transcript Cleanup agent was its only caller; the app cleans transcripts itself now.
+check("update_audio_recording_transcript is gone", !names.includes("update_audio_recording_transcript"));
 
 let r = await call("create_agent", { agent_id: OWN, name: "X", job: "Do X" });
 check("create_agent refuses a non-Chief caller", r.isError && /Only your Chief/.test(r.text) && writes().length === 0, r.text);

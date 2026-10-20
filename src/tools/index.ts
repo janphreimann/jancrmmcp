@@ -62,7 +62,6 @@ import {
   updateNoteSchema, updateNote,
 } from "./notes.js";
 import {
-  updateAudioRecordingTranscriptSchema, updateAudioRecordingTranscript,
   searchAudioRecordingsSchema, searchAudioRecordings,
   getAudioRecordingSchema, getAudioRecording,
 } from "./audioRecordings.js";
@@ -444,13 +443,6 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     "Overwrite the text content of an existing document in-place",
     updateDocumentContentSchema.shape,
     async (args) => ok(await updateDocumentContent(ctx, args as Parameters<typeof updateDocumentContent>[1]))
-  );
-
-  server.tool(
-    "update_audio_recording_transcript",
-    "Overwrite an audio recording's cleaned transcript segments (used by the Transcript Cleanup agent only — never call this to change what was actually said, only to remove filler words/disfluencies)",
-    updateAudioRecordingTranscriptSchema.shape,
-    async (args) => ok(await updateAudioRecordingTranscript(ctx, args as Parameters<typeof updateAudioRecordingTranscript>[1]))
   );
 
   server.tool(
