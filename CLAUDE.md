@@ -32,7 +32,7 @@ take effect. This bit us once: rotating the Supabase key locally and
 "redeploying" left the CRM webapp shipping a stale, now-dead legacy anon key
 until the Vercel-side env var was updated directly.
 
-`/mcp` accepts **only POST** — GET and DELETE get 405 (after bearer auth, so
+`/mcp` and `/mcp/agent` accept **only POST** — GET and DELETE get 405 (after bearer auth, so
 an expired token still yields 401 and triggers re-auth). The server is
 stateless and never pushes to the client, but the SDK transport would hold a
 GET SSE stream open with 15 s keepalives until Vercel's 300 s timeout; clients
@@ -40,6 +40,40 @@ GET SSE stream open with 15 s keepalives until Vercel's 300 s timeout; clients
 a 2 GB instance alive around the clock and burned through the Hobby quota
 (362 GB-h Fluid Provisioned Memory against 3 h of actual CPU in Sep 2026).
 Don't route GET back to the transport.
+
+## Tool profiles (two endpoints)
+
+One server, one OAuth/device-grant token, two tool lists (`src/tools/index.ts`
+→ `ToolProfile`, routed by path in `src/index.ts`):
+
+- **`POST /mcp` — Jan's profile** (claude.ai, Claude Code): every tool except
+  `AGENT_ONLY_TOOLS`.
+- **`POST /mcp/agent` — desktop-agent profile**: Jan's tools plus
+  `AGENT_ONLY_TOOLS`. The CRM desktop app points its agents here
+  (`CRM_MCP_URL` in `../private-janreimanncrm/src-tauri/src/claude_cli.rs`).
+
+`AGENT_ONLY_TOOLS` = every tool that takes the agent's own `agent_id` from
+its desktop system prompt (self-management, `remember`, `read_chat_history`,
+routines, the Chief's tools) plus the tools Jan's profile dropped but the
+desktop app can still grant (`get_project`, `get_pipeline_stats`,
+`suggest_next_step`, `create_initiative`, `update_initiative`). Rules:
+
+- A tool outside a profile is **not registered** (no hidden/disabled tools —
+  each listed tool costs tokens in every conversation).
+- A new tool that needs an `agent_id` goes into `AGENT_ONLY_TOOLS`. A tool the
+  desktop agents may use must also be offered in the CRM's
+  `src/modules/agents/tools.ts` (that list decides `--allowedTools`), and the
+  agent profile must keep every tool listed there
+  (`test/test-profiles-and-extensions.ts` checks both lists).
+- Tokens are not bound to a path: the protected-resource metadata names the
+  server root as the resource, which covers `/mcp` and `/mcp/agent`.
+- A desktop build from before the split still calls `/mcp`; its agents simply
+  don't see the agent-only tools until the app is rebuilt. The rebuilt app
+  re-registers `jan-crm` with the new URL, which needs one
+  `claude mcp login jan-crm` (Claude Code stores tokens per server config).
+- Descriptions say what a tool does, not the memory protocol: that lives once
+  in `src/instructions.ts`. The test keeps Jan's profile under a description
+  budget (54 tools, < 9,000 description characters).
 
 Interactions are intentionally **not** creatable via this server — logging a
 call/meeting/email as an interaction is a user-only action in the CRM UI.
@@ -56,6 +90,14 @@ fixtures together. The "Share portal" section comes from the briefing's
 key as optional, so this server and that migration deploy in either order.
 Share activity is never a `project_timeline()` kind.
 
+`get_project` is not in Jan's profile: `open_project`'s briefing is his view
+of a project. It renders name, stage, health, initiative, start/target date,
+budget, contacts (with company), companies, tags, Memory, status and
+description — not `target_volume`, `invested_volume`, `actual_close_date`,
+`project_type`, `custom_fields`, or the ids of contacts/companies/tags (they
+are in the briefing JSON but not in the markdown). Adding them means changing
+both renderers and the fixtures together.
+
 ## Query rules
 
 - Wall-clock dates and times from tool arguments are Europe/Berlin
@@ -66,6 +108,26 @@ Share activity is never a `project_timeline()` kind.
   `.or()` through a stripping helper (`orTerm`).
 - A create tool whose link/tag insert fails rolls the new row back and
   returns the error — never "created successfully" with half the links.
+- Search that PostgREST can't express runs in a SECURITY INVOKER RPC from the
+  CRM migrations (`search_emails`, `document_text_snippets`,
+  `crm_changes_since`, migration `20261107006400`), never as a JS filter. The
+  tool still passes the caller's own account ids (`user_id = ctx.userId`).
+- Read tools return compact rows (previews, snippets, ids), never mail bodies
+  or document text in lists; the full text comes from the `get_*` tools.
+
+## Edge functions from tools
+
+`callEdgeFunction` (`src/tools/edge.ts`) calls CRM edge functions with
+`ctx.accessToken`; they resolve the user via `getUser()` and accept the
+registered MCP session in `ownerSessionOk()`.
+
+- `mail-create-draft`: drafts only, never send. A reply passes only
+  `reply_to` (a message id) plus flags; the edge function loads the original
+  with the caller's token and builds In-Reply-To/References, the "Re:"
+  subject and the recipients itself — no header comes from the tool.
+- `share-admin` (`share_status`): **read actions only** (`SHARE_READ_ACTIONS`:
+  `recipient.get`, `catalog.list`, `item.get`). Results are whitelisted field
+  by field: never a one-time password, a signed/preview URL or an item link.
 
 ## Agent-provenance rule (always apply, no exceptions)
 
