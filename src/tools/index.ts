@@ -104,12 +104,68 @@ function text(result: string) {
 }
 
 /**
+ * Two tool profiles, one per endpoint (index.ts):
+ *
+ * - "jan" (`POST /mcp`): Jan's own clients — claude.ai, Claude Code. No tool
+ *   that needs an agent_id from a desktop system prompt, and none of the
+ *   legacy tools the briefing or other tools replace.
+ * - "agent" (`POST /mcp/agent`): the desktop agents (CRM app → Claude CLI,
+ *   CRM_MCP_URL in src-tauri/src/claude_cli.rs). Everything the runtime can
+ *   grant them (src/modules/agents/tools.ts in the CRM): Jan's tools plus
+ *   AGENT_ONLY_TOOLS.
+ *
+ * A desktop build from before the split still calls /mcp: its agents simply
+ * don't see the agent-only tools until the app is rebuilt.
+ */
+export type ToolProfile = "jan" | "agent";
+
+/**
+ * Agent-only: self-management, routines, chat history and the Chief's tools
+ * (each takes the agent's own agent_id from its desktop system prompt), plus
+ * tools Jan's profile drops but the desktop agents may still be granted
+ * (get_project → open_project's briefing; get_pipeline_stats; initiatives
+ * write tools; suggest_next_step).
+ */
+export const AGENT_ONLY_TOOLS: readonly string[] = [
+  // need an agent_id
+  "update_agent_profile", "remember", "read_chat_history",
+  "schedule_routine", "update_routine", "cancel_routine",
+  "get_overview", "delegate", "create_agent", "update_agent", "pause_agent", "delete_agent",
+  "create_standing_order", "update_standing_order", "create_proposal", "update_proposal_status",
+  // dropped from Jan's profile, still grantable in the desktop app
+  "get_pipeline_stats", "get_project", "suggest_next_step", "create_initiative", "update_initiative",
+];
+
+export function profileHasTool(profile: ToolProfile, name: string): boolean {
+  return profile === "agent" || !AGENT_ONLY_TOOLS.includes(name);
+}
+
+/**
+ * Registration goes through this view of the server: a tool outside the
+ * profile is never registered at all (not hidden, not disabled), so it costs
+ * no tokens in the client's tool list.
+ */
+function forProfile(server: McpServer, profile: ToolProfile): McpServer {
+  return new Proxy(server, {
+    get(target, prop, receiver) {
+      if (prop === "tool" || prop === "registerTool") {
+        const register = Reflect.get(target, prop, receiver) as (...a: unknown[]) => unknown;
+        return (name: string, ...rest: unknown[]) =>
+          profileHasTool(profile, name) ? register.call(target, name, ...rest) : undefined;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+
+/**
  * Der Ctx kommt pro Anfrage aus dem Bearer-Token und trägt das
  * Supabase-Access-Token des Nutzers. Jedes Tool bekommt ihn als erstes
  * Argument — es gibt bewusst keinen Modul-Singleton mehr, an dem sich zwei
  * Nutzer treffen könnten.
  */
-export function registerAllTools(server: McpServer, ctx: Ctx) {
+export function registerTools(mcp: McpServer, ctx: Ctx, profile: ToolProfile) {
+  const server = forProfile(mcp, profile);
   server.tool(
     "search_contacts",
     "Search contacts by name, email, company, or source — fuzzy, tolerates typos",
@@ -170,7 +226,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "open_project",
-    "Open a project and get its briefing: current state (your status note and the human's project description, each with a date), what the user has told any agent about this project before (Memory), everything that happened since you last opened it, what is open, and an index of every document, interaction, recording, event and pinned note with ids you can pass to the drill-down tools, and what the project's people did lately in the Share portal (opened documents, comments). Call this first whenever a request concerns a project. Whenever the user tells you something that should still hold next time — a constraint, a preference, a decision, a correction of something you got wrong — save it in the same turn, without being asked: remember_for_project for this project, remember_about_user for what holds beyond it. If the user tells you about something that happened in the project (a meeting, a call, a decision), add it with add_timeline_entry. Before you finish working on the project: call update_agent_status if the state changed — that is how your next visit knows where you left off. The timeline is the project's history, not your log: never write your own work into it.",
+    "Open a project (name or id) and get its briefing: the project's fields, people and tags, Memory, your status note and the human's description, what changed since your last visit, what is open, an index of documents, interactions, recordings, events and pinned notes (ids for the drill-down tools) and recent Share portal activity. Call it first whenever a request concerns a project; before you finish, call update_agent_status if the state changed.",
     openProjectSchema.shape,
     async (args) => text(await openProject(ctx, args as Parameters<typeof openProject>[1]))
   );
@@ -184,14 +240,14 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "remember_about_user",
-    "Memory about the user that holds beyond one project — how they work, rules they gave you, preferences, corrections of your mistakes (\"I only make an offer once the client has said what they want\"). Examples: how they want to be addressed (\"Herr Bauer\"), a rule for how they work, a preference. Every agent gets it: in this server's instructions at connection start and in every in-app chat; the user edits it in Settings. Check after every user message whether it contains something like that, and if so save it right away, in the same turn, without being asked and without announcing it. Full replacement, not an append: start from the current text (the server instructions; the result also returns the previous text), keep what still holds, drop what is outdated. Something that concerns only one project goes to remember_for_project instead.",
+    "Save what holds for the user beyond one project (rules, preferences, how to address them, corrections). Every agent gets it via the server instructions. Full replacement of the text in the instructions; the result returns the previous text.",
     rememberAboutUserSchema.shape,
     async (args) => ok(await rememberAboutUser(ctx, args as Parameters<typeof rememberAboutUser>[1]))
   );
 
   server.tool(
     "remember_for_project",
-    "The project's memory: what the user told you about this project that should still hold next time (constraints, preferences, decisions, corrections of your mistakes). Every agent that opens the project sees it under Memory at the top of the briefing. Check after every user message whether it contains something like that, and if so save it right away, in the same turn, without being asked and without announcing it — don't wait for \"remember this\". Full replacement, not an append: start from the current text, keep what still holds, drop what is outdated, don't duplicate. Something that holds for the user beyond this project goes to remember_about_user instead. Not for the project's state — that is update_agent_status.",
+    "Save what the user told you about one project that should still hold next time; shown under Memory at the top of its briefing. Full replacement of the current Memory text. Not for the project's state (update_agent_status).",
     rememberForProjectSchema.shape,
     async (args) => ok(await rememberForProject(ctx, args as Parameters<typeof rememberForProject>[1]))
   );
@@ -345,6 +401,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
     async (args) => ok(await createCalendarEvent(ctx, args as Parameters<typeof createCalendarEvent>[1]))
   );
 
+
   server.tool(
     "create_email_draft",
     "Save an email draft to the Drafts folder via IMAP. To, CC, subject and body are all optional — useful for pre-filling a draft the user will finish later.",
@@ -461,7 +518,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "set_recording_preference",
-    "Change how the user's recordings and uploaded transcripts are processed — only when the user asks for it (\"summaries in English\", \"no tasks for the other side\", \"keep filler words\"). Pass the step and the COMPLETE new wish text for it (merge with the current text from your overview). The reply format of each step is fixed and cannot be changed here. Applies from the next recording; nothing already generated is redone.",
+    "Change how the user's recordings and uploaded transcripts are processed — only when the user asks for it (\"summaries in English\", \"no tasks for the other side\", \"keep filler words\"). Pass the step and the COMPLETE new wish text for it (merged with the current text; the result returns the previous one). The reply format of each step is fixed and cannot be changed here. Applies from the next recording; nothing already generated is redone.",
     setRecordingPreferenceSchema.shape,
     async (args) => ok(await setRecordingPreference(ctx, args as Parameters<typeof setRecordingPreference>[1]))
   );
@@ -533,7 +590,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "remember",
-    "Overwrite your own memory document — the durable summary of your job and the working patterns you've learned for it, re-read on every message. Only you see it: anything the user tells you about themselves goes to remember_about_user, anything about one project to remember_for_project.",
+    "Overwrite your own memory document (your job and the working patterns you learned for it), re-read on every message. Only you see it.",
     rememberSchema.shape,
     async (args) => ok(await remember(ctx, args as Parameters<typeof remember>[1]))
   );

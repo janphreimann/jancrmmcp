@@ -7,12 +7,19 @@ import type { Ctx } from "./context.js";
 // rule like "address me as Herr Bauer" reaches every agent, not only the one
 // that was told, and not only inside a project briefing.
 
+// The memory protocol lives here and only here — the tool descriptions of
+// remember_about_user, remember_for_project, remember and open_project say
+// what each tool stores, not when to call it.
 const BASE =
-  "This server is the user's CRM. When a request concerns a project, call open_project first. " +
-  "After every user message, check whether it told you something that should still hold next time — " +
-  "a rule, a preference, how they want to be addressed, a correction of your mistake — and save it in the " +
-  "same turn, without being asked: remember_for_project if it concerns one project, remember_about_user " +
-  "if it holds beyond it.";
+  "This server is the user's CRM. When a request concerns a project, call open_project first; before you finish, " +
+  "call update_agent_status if the project's state changed.\n\n" +
+  "Memory: after every user message, check whether it told you something that should still hold next time — " +
+  "a rule, a preference, how they want to be addressed, a decision, a correction of your mistake — and save it in the " +
+  "same turn, without being asked and without announcing it: remember_for_project if it concerns one project, " +
+  "remember_about_user if it holds beyond it. Both replace the whole text: start from the current one (the project's " +
+  "Memory in the briefing; the user's below), keep what still holds, drop what is outdated, don't duplicate.\n\n" +
+  "Something that happened in a project (a meeting, a call, a decision the user tells you about) goes to " +
+  "add_timeline_entry. The timeline is the project's history, never a log of your own work.";
 
 export function renderInstructions(memory: string): string {
   const m = memory.trim();

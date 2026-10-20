@@ -6,7 +6,7 @@
 // The schema alone is not the proof: server.tool(name, desc, schema.shape, cb)
 // makes the SDK rebuild a plain z.object(shape), which strips unknown keys and
 // loses .strict(). So the second half of this test goes through the real
-// registration (registerAllTools) and a real tools/call over an in-memory
+// registration (registerTools) and a real tools/call over an in-memory
 // transport — the exact path a client takes.
 //
 // projects.ts pulls in supabase.ts, which throws unless SUPABASE_* env vars
@@ -19,7 +19,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { updateProjectSchema } from "../src/tools/projects.js";
 import { updateInitiativeSchema } from "../src/tools/initiatives.js";
 import { createNoteSchema, updateNoteSchema } from "../src/tools/notes.js";
-import { registerAllTools } from "../src/tools/index.js";
+import { registerTools } from "../src/tools/index.js";
 import type { Ctx } from "../src/context.js";
 
 let failed = 0;
@@ -64,7 +64,7 @@ function stubDb(): SupabaseClient {
 const ctx: Ctx = { userId: id, orgId: id, db: stubDb(), admin: stubDb(), accessToken: "test" };
 
 const server = new McpServer({ name: "strict-test", version: "0.0.0" });
-registerAllTools(server, ctx);
+registerTools(server, ctx, "agent");
 const client = new Client({ name: "strict-test-client", version: "0.0.0" });
 const [clientT, serverT] = InMemoryTransport.createLinkedPair();
 await Promise.all([server.connect(serverT), client.connect(clientT)]);

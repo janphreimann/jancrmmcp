@@ -11,6 +11,9 @@ function check(name: string, ok: boolean) {
 check("memory is in the instructions", renderInstructions("- Address me as Herr Bauer.").includes("- Address me as Herr Bauer."));
 check("empty memory says so", renderInstructions("  ").includes("nothing saved yet"));
 check("instructions tell the agent to save", renderInstructions("").includes("remember_about_user"));
+// The memory protocol is stated here once; the tool descriptions no longer repeat it.
+check("instructions carry the memory protocol", /after every user message/i.test(renderInstructions("")) && renderInstructions("").includes("without being asked") && renderInstructions("").includes("remember_for_project"));
+check("instructions say both memories are full replacements", /replace the whole text/.test(renderInstructions("")));
 check("initialize is recognized", isInitialize({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }));
 check("initialize inside a batch is recognized", isInitialize([{ method: "notifications/initialized" }, { method: "initialize" }]));
 check("tools/call is not initialize", !isInitialize({ method: "tools/call" }));

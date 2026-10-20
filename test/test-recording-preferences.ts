@@ -6,7 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { registerAllTools } from "../src/tools/index.js";
+import { registerTools } from "../src/tools/index.js";
 import type { Ctx } from "../src/context.js";
 import { workerTools } from "../src/tools/chief.js";
 
@@ -43,7 +43,7 @@ const fakeDb = { from: builder } as unknown as SupabaseClient;
 const ctx: Ctx = { userId: "u1", orgId: "o1", db: fakeDb, admin: fakeDb, accessToken: "test" };
 
 const server = new McpServer({ name: "t", version: "0" });
-registerAllTools(server, ctx);
+registerTools(server, ctx, "agent");
 const [a, b] = InMemoryTransport.createLinkedPair();
 const client = new Client({ name: "c", version: "0" });
 await Promise.all([server.connect(a), client.connect(b)]);

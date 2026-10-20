@@ -12,7 +12,7 @@ const KEY = { cleanup: "recording_pref_cleanup", summary: "recording_pref_summar
 
 export const setRecordingPreferenceSchema = z.object({
   step: z.enum(["cleanup", "summary", "tasks"]).describe("cleanup = tidying the raw transcript; summary = the summary text; tasks = which task suggestions are made"),
-  preference: z.string().max(2000).describe("The complete new wish text for this step — merge with the current text (shown in your overview), don't drop earlier wishes. Empty string resets the step to its defaults."),
+  preference: z.string().max(2000).describe("The complete new wish text for this step — merge with the current text (the Chief's overview shows it; the result returns the previous one), don't drop earlier wishes. Empty string resets the step to its defaults."),
 }).strict();
 
 export async function setRecordingPreference(ctx: Ctx, args: z.infer<typeof setRecordingPreferenceSchema>) {

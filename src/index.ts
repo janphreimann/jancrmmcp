@@ -6,7 +6,7 @@ import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { oauthProvider, handleDevicePoll } from "./oauth.js";
 import { buildContext } from "./context.js";
-import { registerAllTools } from "./tools/index.js";
+import { registerTools, type ToolProfile } from "./tools/index.js";
 import { isInitialize, loadInstructions } from "./instructions.js";
 import { ISSUER_URL } from "./issuer.js";
 
@@ -26,9 +26,15 @@ app.use(mcpAuthRouter({ provider: oauthProvider, issuerUrl: ISSUER_URL }));
 // dort angezeigte Code in der CRM-Web-App eingelöst wurde. Siehe oauth.ts.
 app.post("/auth/device-poll", handleDevicePoll);
 
-// MCP endpoint — protected by OAuth Bearer token
+// MCP endpoints — protected by OAuth Bearer token. Same server, same tokens,
+// two tool profiles (tools/index.ts → ToolProfile): /mcp for Jan's own
+// clients (claude.ai, Claude Code), /mcp/agent for the desktop agents. A
+// token is not bound to either path: the protected-resource metadata names
+// the server root as the resource, which covers both.
+const PROFILE_BY_PATH: Record<string, ToolProfile> = { "/mcp": "jan", "/mcp/agent": "agent" };
+
 app.all(
-  "/mcp",
+  Object.keys(PROFILE_BY_PATH),
   requireBearerAuth({ verifier: oauthProvider }),
   async (req, res) => {
     // Stateless: Der Server schickt nie von sich aus etwas an den Client. Ein
@@ -67,7 +73,7 @@ app.all(
     });
     const instructions = isInitialize(req.body) ? await loadInstructions(ctx) : undefined;
     const server = new McpServer({ name: "crm-mcp-server", version: "1.0.0" }, instructions ? { instructions } : undefined);
-    registerAllTools(server, ctx);
+    registerTools(server, ctx, PROFILE_BY_PATH[req.path.replace(/\/+$/, "")] ?? "jan");
 
     transport.onclose = () => server.close().catch(() => {});
 
@@ -81,7 +87,7 @@ if (process.env.VERCEL !== "1") {
   const PORT = parseInt(process.env.PORT ?? "3000", 10);
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`CRM MCP Server running on port ${PORT}`);
-    console.log(`MCP endpoint: http://0.0.0.0:${PORT}/mcp`);
+    console.log(`MCP endpoints: http://0.0.0.0:${PORT}/mcp (Jan), /mcp/agent (desktop agents)`);
   });
 }
 
