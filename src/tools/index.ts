@@ -361,7 +361,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "get_email",
-    "Get one email's full content by UUID: body, all recipients, and attachment list",
+    "Get one email by UUID: plain-text body (cut at 50,000 characters with a marker), all recipients and the attachment list. The HTML body only with include_html: true.",
     getEmailSchema.shape,
     async (args) => ok(await getEmail(ctx, args as Parameters<typeof getEmail>[1]))
   );
@@ -419,7 +419,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "get_document_content",
-    "Get a document's metadata and text content (for .md, .txt, .csv, .json, etc.). Returns a signed download URL for all file types.",
+    "Get a document's metadata and text content (extracted text of PDF/DOCX/PPTX/XLSX, or the file itself for .md, .txt, .csv, .json, etc.). Long texts come in pages: while has_more is true, call again with offset = next_offset. Returns a signed download URL for all file types.",
     getDocumentContentSchema.shape,
     async (args) => ok(await getDocumentContent(ctx, args as Parameters<typeof getDocumentContent>[1]))
   );

@@ -216,7 +216,33 @@ export async function listEmails(ctx: Ctx, args: z.infer<typeof listEmailsSchema
 
 export const getEmailSchema = z.object({
   id: z.string().uuid(),
+  include_html: z.boolean().optional().default(false).describe(
+    "Also return body_html. Off by default: the plain text carries the content, and HTML mails are often many times larger."
+  ),
 });
+
+// One mail must not crowd out the rest of the conversation: bodies beyond
+// this are cut with a visible marker.
+export const EMAIL_BODY_MAX_CHARS = 50_000;
+
+export function capBody(text: string | null | undefined, max = EMAIL_BODY_MAX_CHARS): { text: string | null; truncated: boolean } {
+  if (text == null) return { text: null, truncated: false };
+  if (text.length <= max) return { text, truncated: false };
+  return { text: `${text.slice(0, max)}\n…[truncated — ${text.length - max} more characters]`, truncated: true };
+}
+
+/** Rough text of an HTML-only mail, for when body_text is empty. */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<(script|style|head)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<br\s*\/?>|<\/(p|div|li|tr|h[1-6])>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&amp;/gi, "&")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 export async function getEmail(ctx: Ctx, args: z.infer<typeof getEmailSchema>) {
   // email_messages ist nutzergebunden über account_id -> ms_email_accounts,
@@ -250,6 +276,10 @@ export async function getEmail(ctx: Ctx, args: z.infer<typeof getEmailSchema>) {
     .eq("message_id", message.id);
   if (attachmentsError) throw new Error(attachmentsError.message);
 
+  const plain = message.body_text?.trim() ? message.body_text : message.body_html ? htmlToText(message.body_html) : message.body_text;
+  const text = capBody(plain);
+  const html = args.include_html ? capBody(message.body_html) : null;
+
   return {
     id: message.id,
     subject: message.subject,
@@ -258,8 +288,9 @@ export async function getEmail(ctx: Ctx, args: z.infer<typeof getEmailSchema>) {
     to_addresses: message.to_addresses,
     cc_addresses: message.cc_addresses,
     bcc_addresses: message.bcc_addresses,
-    body_text: message.body_text,
-    body_html: message.body_html,
+    body_text: text.text,
+    ...(text.truncated ? { body_text_truncated: true } : {}),
+    ...(html ? { body_html: html.text, ...(html.truncated ? { body_html_truncated: true } : {}) } : {}),
     body_preview: message.body_preview,
     received_at: message.received_at,
     is_read: message.is_read,

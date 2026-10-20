@@ -2,6 +2,7 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import { agentMeta, supabaseAnonKey, supabaseUrl } from "../supabase.js";
 import type { Ctx } from "../context.js";
+import { pageTranscript, TRANSCRIPT_PAGE_DEFAULT_CHARS, TRANSCRIPT_PAGE_MAX_CHARS } from "./audioRecordingHelpers.js";
 
 // ─── Folder tools ─────────────────────────────────────────────────────────────
 
@@ -97,7 +98,20 @@ export async function listDocuments(ctx: Ctx, args: z.infer<typeof listDocuments
 
 export const getDocumentContentSchema = z.object({
   id: z.string().uuid().describe("Document UUID"),
+  offset: z.number().int().min(0).optional().default(0).describe(
+    "Character offset into the text. Leave at 0 for the first page; pass the previous answer's next_offset to continue."
+  ),
+  max_chars: z.number().int().min(1_000).max(TRANSCRIPT_PAGE_MAX_CHARS).optional().default(TRANSCRIPT_PAGE_DEFAULT_CHARS).describe(
+    `Page size in characters (default ${TRANSCRIPT_PAGE_DEFAULT_CHARS}, max ${TRANSCRIPT_PAGE_MAX_CHARS})`
+  ),
 });
+
+// Same paging as get_audio_recording: a long document used to come whole and
+// could push the answer past the client's output limit.
+function page(text: string, args: z.infer<typeof getDocumentContentSchema>) {
+  const p = pageTranscript(text, args.offset ?? 0, args.max_chars ?? TRANSCRIPT_PAGE_DEFAULT_CHARS);
+  return { content: p.text, offset: p.offset, total_chars: p.total_chars, next_offset: p.next_offset, has_more: p.next_offset !== null };
+}
 
 export async function getDocumentContent(ctx: Ctx, args: z.infer<typeof getDocumentContentSchema>) {
   const { data: doc, error } = await ctx.db
@@ -124,7 +138,7 @@ export async function getDocumentContent(ctx: Ctx, args: z.infer<typeof getDocum
       description: doc.description,
       folder_id: doc.folder_id,
       uploaded_at: doc.uploaded_at,
-      content: doc.extracted_text,
+      ...page(doc.extracted_text, args),
       extracted_at: doc.extracted_at,
       extraction_error: doc.extraction_error,
       signed_url: urlData.signedUrl,
@@ -144,7 +158,7 @@ export async function getDocumentContent(ctx: Ctx, args: z.infer<typeof getDocum
       description: doc.description,
       folder_id: doc.folder_id,
       uploaded_at: doc.uploaded_at,
-      content,
+      ...page(content, args),
       signed_url: urlData.signedUrl,
     };
   }
