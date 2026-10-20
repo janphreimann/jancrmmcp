@@ -90,7 +90,7 @@ const needAgentId = [
   "get_overview", "delegate", "create_agent", "update_agent", "pause_agent", "delete_agent",
   "create_standing_order", "update_standing_order", "create_proposal", "update_proposal_status",
 ];
-const droppedForJan = ["get_pipeline_stats", "get_project", "suggest_next_step", "create_initiative", "update_initiative"];
+const droppedForJan = ["get_pipeline_stats", "suggest_next_step", "create_initiative", "update_initiative"];
 const newTools = ["list_calendar_events", "share_status", "changes_since"];
 
 check("Jan's profile lacks every agent_id tool", needAgentId.every((n) => !janNames.has(n)), needAgentId.filter((n) => janNames.has(n)).join(", "));
@@ -98,9 +98,9 @@ check("Jan's profile lacks the dropped tools", droppedForJan.every((n) => !janNa
 check("Jan's profile keeps search_initiatives, get_initiative, open_project", ["search_initiatives", "get_initiative", "open_project"].every((n) => janNames.has(n)));
 check("agent profile has every agent tool and the dropped ones", [...needAgentId, ...droppedForJan].every((n) => agentNames.has(n)));
 check("both profiles have the new tools", newTools.every((n) => janNames.has(n) && agentNames.has(n)));
-check("AGENT_ONLY_TOOLS is exactly the 21 tools", AGENT_ONLY_TOOLS.length === 21 && [...needAgentId, ...droppedForJan].every((n) => AGENT_ONLY_TOOLS.includes(n)));
+check("AGENT_ONLY_TOOLS is exactly the 20 tools", AGENT_ONLY_TOOLS.length === 20 && [...needAgentId, ...droppedForJan].every((n) => AGENT_ONLY_TOOLS.includes(n)));
 check("agent profile = Jan's profile + AGENT_ONLY_TOOLS", agent.length === jan.length + AGENT_ONLY_TOOLS.length && jan.every((t) => agentNames.has(t.name)));
-check("tool counts: Jan 54, agent 75", jan.length === 54 && agent.length === 75, `${jan.length} / ${agent.length}`);
+check("tool counts: Jan 55, agent 75", jan.length === 55 && agent.length === 75, `${jan.length} / ${agent.length}`);
 // Every tool the desktop runtime can grant (CRM src/modules/agents/tools.ts) exists in the agent profile.
 const desktop = [
   "search_contacts", "get_contact", "create_contact", "update_contact", "search_companies", "get_company", "create_company", "update_company",

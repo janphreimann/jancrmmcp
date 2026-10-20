@@ -55,7 +55,7 @@ One server, one OAuth/device-grant token, two tool lists (`src/tools/index.ts`
 `AGENT_ONLY_TOOLS` = every tool that takes the agent's own `agent_id` from
 its desktop system prompt (self-management, `remember`, `read_chat_history`,
 routines, the Chief's tools) plus the tools Jan's profile dropped but the
-desktop app can still grant (`get_project`, `get_pipeline_stats`,
+desktop app can still grant (`get_pipeline_stats`,
 `suggest_next_step`, `create_initiative`, `update_initiative`). Rules:
 
 - A tool outside a profile is **not registered** (no hidden/disabled tools —
@@ -90,13 +90,12 @@ fixtures together. The "Share portal" section comes from the briefing's
 key as optional, so this server and that migration deploy in either order.
 Share activity is never a `project_timeline()` kind.
 
-`get_project` is not in Jan's profile: `open_project`'s briefing is his view
-of a project. It renders name, stage, health, initiative, start/target date,
-budget, contacts (with company), companies, tags, Memory, status and
-description — not `target_volume`, `invested_volume`, `actual_close_date`,
-`project_type`, `custom_fields`, or the ids of contacts/companies/tags (they
-are in the briefing JSON but not in the markdown). Adding them means changing
-both renderers and the fixtures together.
+`get_project` stays in Jan's profile (Jan, 2026-10-20): `open_project`'s
+briefing renders name, stage, health, initiative, dates, budget, people,
+companies, tags, Memory, status and a capped description, but not
+`target_volume`, `invested_volume`, `actual_close_date`, `project_type`,
+`custom_fields` or the full description — the briefing points to `get_project`
+for those.
 
 ## Query rules
 

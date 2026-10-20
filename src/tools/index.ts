@@ -128,8 +128,7 @@ export type ToolProfile = "jan" | "agent";
  * Agent-only: self-management, routines, chat history and the Chief's tools
  * (each takes the agent's own agent_id from its desktop system prompt), plus
  * tools Jan's profile drops but the desktop agents may still be granted
- * (get_project → open_project's briefing; get_pipeline_stats; initiatives
- * write tools; suggest_next_step).
+ * (get_pipeline_stats; initiatives write tools; suggest_next_step).
  */
 export const AGENT_ONLY_TOOLS: readonly string[] = [
   // need an agent_id
@@ -138,7 +137,7 @@ export const AGENT_ONLY_TOOLS: readonly string[] = [
   "get_overview", "delegate", "create_agent", "update_agent", "pause_agent", "delete_agent",
   "create_standing_order", "update_standing_order", "create_proposal", "update_proposal_status",
   // dropped from Jan's profile, still grantable in the desktop app
-  "get_pipeline_stats", "get_project", "suggest_next_step", "create_initiative", "update_initiative",
+  "get_pipeline_stats", "suggest_next_step", "create_initiative", "update_initiative",
 ];
 
 export function profileHasTool(profile: ToolProfile, name: string): boolean {
