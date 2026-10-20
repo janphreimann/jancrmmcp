@@ -5,9 +5,9 @@ import type { Ctx } from "../context.js";
 // Gedächtnis schreiben — nie beliebige Zeilen. agent_id kommt als Parameter,
 // weil dieser MCP-Server (anders als eine zukünftige Erweiterung) keine
 // Bindung "dieser Aufruf gehört zu Agent X" kennt; validiert wird stattdessen
-// wie überall sonst hier über die Organisation, nicht per Vertrauen auf den
-// Parameter — derselbe Maßstab wie bei jeder verlinkten Entity-ID
-// (create_task etc.). Die eigene agent_id steht dem Agenten im fixen
+// wie überall sonst hier über RLS (nur Zeilen des Owners sind sichtbar), nicht
+// per Vertrauen auf den Parameter — derselbe Maßstab wie bei jeder verlinkten
+// Entity-ID (create_task etc.). Die eigene agent_id steht dem Agenten im fixen
 // System-Prompt zur Verfügung (siehe SELF_DEFINING_AGENT_SYSTEM_PROMPT in
 // der CRM-App).
 async function assertOwnOrgAgent(ctx: Ctx, agentId: string): Promise<void> {
@@ -15,9 +15,8 @@ async function assertOwnOrgAgent(ctx: Ctx, agentId: string): Promise<void> {
     .from("agents")
     .select("id")
     .eq("id", agentId)
-    .eq("organization_id", ctx.orgId)
     .maybeSingle();
-  if (error || !data) throw new Error(`Agent ${agentId} not found in your organization.`);
+  if (error || !data) throw new Error(`Agent ${agentId} not found.`);
 }
 
 export const updateAgentProfileSchema = z.object({

@@ -10,7 +10,7 @@
 // transport — the exact path a client takes.
 //
 // projects.ts pulls in supabase.ts, which throws unless SUPABASE_* env vars
-// are set — same reason test-mail-draft.ts loads dotenv before its imports.
+// are set.
 import "dotenv/config";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";

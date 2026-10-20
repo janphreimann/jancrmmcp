@@ -368,7 +368,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
 
   server.tool(
     "list_tags",
-    "List all available tags in the organization",
+    "List all available tags",
     listTagsSchema.shape,
     async () => ok(await listTags(ctx))
   );
@@ -555,7 +555,7 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
   // registerTool with the full object schema keeps .strict() (see update_project).
   server.registerTool(
     "delegate",
-    { description: "Hand a task to another agent and get the result back: it runs as a new turn in that agent's thread, and its final reply comes back to you as a message \"Result from …\". Returns at once. Use agent ids from get_overview. Only the Chief delegates on its own; other agents only while working on a task delegated to them. For notes that need no reply, use send_agent_message.", inputSchema: delegateSchema },
+    { description: "Hand a task to another agent and get the result back: it runs as a new turn in that agent's thread, and its final reply comes back to you as a message \"Result from …\". Returns at once. Use agent ids from get_overview. Only the Chief delegates on its own; other agents only while working on a task delegated to them. For notes that need no reply, use send_agent_message (an in-app tool of the desktop agents, not part of this server).", inputSchema: delegateSchema },
     async (args) => ok(await delegate(ctx, args as Parameters<typeof delegate>[1]))
   );
   server.registerTool(

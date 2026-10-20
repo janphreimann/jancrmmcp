@@ -6,9 +6,8 @@ async function assertOwnOrgAgent(ctx: Ctx, agentId: string): Promise<void> {
     .from("agents")
     .select("id")
     .eq("id", agentId)
-    .eq("organization_id", ctx.orgId)
     .maybeSingle();
-  if (error || !data) throw new Error(`Agent ${agentId} not found in your organization.`);
+  if (error || !data) throw new Error(`Agent ${agentId} not found.`);
 }
 
 // Exactly the fields agent_triggers already has (see
