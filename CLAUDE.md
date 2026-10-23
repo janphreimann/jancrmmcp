@@ -298,7 +298,10 @@ diesem Präfix nach `src/apiKeys.ts`; der Key gilt auf `/mcp` und
   sperrt die gelöschte Sitzung bei MFA sofort). Ein Token, dessen
   `session_id` nicht (mehr) die der Zeile ist (Sitzung per globalem Abmelden
   gelöscht → `session_id` NULL), gilt als unbrauchbar und wird sofort
-  erneuert.
+  erneuert. Unbekannte Keys stehen 30 s in einem Negativ-Cache (kein
+  DB-Aufruf pro Müll-Token).
+- **Zeitgrenzen.** Refresh 6 s, neue Sitzung 9 s — zusammen unter dem
+  20-s-Lease, damit keine zweite Instanz parallel erneuert.
 - **401 nur für unbekannte/widerrufene Keys.** Störungen (Datenbank, Lease-
   Timeout, Mint gescheitert) sind `ApiKeyUnavailableError` (`ServerError` →
   500): ein 401 ließe Clients ihre Zugangsdaten verwerfen oder einen

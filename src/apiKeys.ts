@@ -39,6 +39,26 @@ const CACHE_MAX_ENTRIES = 50;
 const LEASE_S = 20;
 const WAIT_STEP_MS = 500;
 const WAIT_STEPS = 20; // 20 × 500 ms = 10 s
+// Zeitgrenzen der Erneuerung: zusammen unter LEASE_S, damit keine zweite
+// Instanz den Lease bekommt, während diese noch arbeitet.
+const REFRESH_TIMEOUT_MS = 6_000;
+const MINT_TIMEOUT_MS = 9_000;
+// Unbekannte Keys kurz merken: jeder `Bearer jcrm_<Müll>` kostete sonst
+// eine Datenbankabfrage.
+const NEGATIVE_CACHE_MS = 30 * 1000;
+const NEGATIVE_CACHE_MAX = 500;
+
+class StepTimeout extends Error {}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new StepTimeout()), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 interface KeyRow {
   id: string;
@@ -67,6 +87,9 @@ export interface ApiKeyDeps extends MintDeps {
   /** Millisekunden, wie Date.now (Tests). */
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Zeitgrenzen der Erneuerung in ms (Tests). */
+  refreshTimeoutMs?: number;
+  mintTimeoutMs?: number;
 }
 
 export interface ApiKeyVerifier {
@@ -88,6 +111,16 @@ export function createApiKeyVerifier(deps: ApiKeyDeps): ApiKeyVerifier {
   const { admin } = deps;
 
   const cache = new Map<string, { s: Usable; until: number }>();
+  const unknown = new Map<string, number>();
+
+  function rememberUnknown(hash: string): void {
+    const t = now();
+    if (unknown.size >= NEGATIVE_CACHE_MAX) {
+      for (const [h, until] of unknown) if (until <= t) unknown.delete(h);
+      if (unknown.size >= NEGATIVE_CACHE_MAX) unknown.clear();
+    }
+    unknown.set(hash, t + NEGATIVE_CACHE_MS);
+  }
   const inflight = new Map<string, Promise<Usable>>();
 
   async function resolve(hash: string): Promise<KeyRow | null> {
@@ -121,7 +154,10 @@ export function createApiKeyVerifier(deps: ApiKeyDeps): ApiKeyVerifier {
 
   async function refresh(rt: string, userId: string): Promise<{ session: Session; sessionId: string } | null> {
     try {
-      const { data, error } = await deps.anon().auth.refreshSession({ refresh_token: rt });
+      const { data, error } = await withTimeout(
+        deps.anon().auth.refreshSession({ refresh_token: rt }),
+        deps.refreshTimeoutMs ?? REFRESH_TIMEOUT_MS,
+      );
       if (error || !data.session || data.user?.id !== userId) return null;
       const sessionId = accessTokenClaims(data.session.access_token)?.session_id;
       if (!sessionId) return null;
@@ -151,7 +187,13 @@ export function createApiKeyVerifier(deps: ApiKeyDeps): ApiKeyVerifier {
       let next = prev ? await refresh(prev.rt, row.user_id) : null;
       let minted = false;
       if (!next) {
-        const m = await mintRegisteredSession(deps, row.user_id, `API key: ${row.label}`);
+        const m = await withTimeout(
+          mintRegisteredSession(deps, row.user_id, `API key: ${row.label}`),
+          deps.mintTimeoutMs ?? MINT_TIMEOUT_MS,
+        ).catch((e) => {
+          if (e instanceof StepTimeout) failed("mint", { message: "timeout" });
+          throw e;
+        });
         if (!m.ok) failed("mint", { message: m.reason });
         next = { session: m.session, sessionId: m.sessionId };
         minted = true;
@@ -217,6 +259,11 @@ export function createApiKeyVerifier(deps: ApiKeyDeps): ApiKeyVerifier {
   return {
     async verify(key: string): Promise<AuthInfo> {
       const hash = sha256Hex(key);
+      const miss = unknown.get(hash);
+      if (miss !== undefined) {
+        if (miss > now()) throw new InvalidTokenError("Invalid API key");
+        unknown.delete(hash);
+      }
       const hit = cache.get(hash);
       let s: Usable;
       if (hit && hit.until > now()) {
@@ -232,7 +279,11 @@ export function createApiKeyVerifier(deps: ApiKeyDeps): ApiKeyVerifier {
         try {
           s = await p;
         } catch (err) {
-          if (err instanceof InvalidTokenError || err instanceof ServerError) throw err;
+          if (err instanceof InvalidTokenError) {
+            rememberUnknown(hash);
+            throw err;
+          }
+          if (err instanceof ServerError) throw err;
           // Unerwartetes (Netzwerk, Bibliothek) ist eine Störung, kein Urteil
           // über den Key. Nur der Typ ins Log.
           console.error("api key: verification failed", err instanceof Error ? err.name : typeof err);

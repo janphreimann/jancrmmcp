@@ -157,10 +157,15 @@ const fakeAnon = () => ({
   },
 }) as unknown as SupabaseClient;
 
+let refreshHangs = false;
 function verifier() {
   return createApiKeyVerifier({
     admin: fakeAdmin,
-    anon: fakeAnon,
+    anon: refreshHangs
+      ? (() => ({ auth: { ...(fakeAnon() as any).auth, refreshSession: () => new Promise(() => {}) } })) as unknown as typeof fakeAnon
+      : fakeAnon,
+    refreshTimeoutMs: 50,
+    mintTimeoutMs: 50,
     now: () => clock,
     sleep: async (ms) => { clock += ms; onSleep(count("sleep")); calls.push({ name: "sleep" }); },
   });
@@ -210,6 +215,29 @@ reset(freshRow({ expIn: 3600 }));
   clock += 60 * 1000 + 1;
   const e = await expectError(() => v.verify(KEY));
   check("revoked key → 401 once the cache entry is gone", e instanceof InvalidTokenError);
+}
+
+// ── unbekannte Keys: kurzer Negativ-Cache ────────────────────────────────
+console.log("negative cache");
+reset(freshRow({ expIn: 3600 }));
+{
+  const v = verifier();
+  await expectError(() => v.verify(OTHER_KEY));
+  const e = await expectError(() => v.verify(OTHER_KEY));
+  check("second unknown request → 401 without DB", e instanceof InvalidTokenError && count("mcp_api_key_resolve") === 1);
+  clock += 30 * 1000 + 1;
+  await expectError(() => v.verify(OTHER_KEY));
+  check("asks the DB again after 30 s", count("mcp_api_key_resolve") === 2);
+}
+
+// ── hängender Refresh → Zeitgrenze → neue Sitzung ────────────────────────
+console.log("refresh hangs → timeout → mint");
+reset(freshRow({ expIn: -10 }));
+refreshHangs = true;
+{
+  const info = await verifier().verify(KEY);
+  refreshHangs = false;
+  check("minted after the refresh timed out", count("generateLink") === 1 && (info.extra as { supabaseAccessToken: string }).supabaseAccessToken === lastIssued!.at);
 }
 
 // ── concurrent requests share one resolution ─────────────────────────────
