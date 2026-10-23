@@ -203,11 +203,11 @@ reset(freshRow({ expIn: 3600 }));
   check("resolve called with the hash", (callOf("mcp_api_key_resolve")?.args as { p_key_hash: string }).p_key_hash === HASH);
   await v.verify(KEY);
   check("second request served from cache", count("mcp_api_key_resolve") === 1);
-  clock += 5 * 60 * 1000 + 1;
+  clock += 60 * 1000 + 1;
   await v.verify(KEY);
-  check("cache holds at most 5 min", count("mcp_api_key_resolve") === 2);
+  check("cache holds at most 1 min", count("mcp_api_key_resolve") === 2);
   row = null; // widerrufen
-  clock += 5 * 60 * 1000 + 1;
+  clock += 60 * 1000 + 1;
   const e = await expectError(() => v.verify(KEY));
   check("revoked key → 401 once the cache entry is gone", e instanceof InvalidTokenError);
 }
@@ -257,6 +257,17 @@ reset(freshRow({ expIn: 60 }));
   check("uses the session another instance stored", (info.extra as { supabaseAccessToken: string }).supabaseAccessToken === open<{ at: string }>(fresh.sealed_session!)!.at);
   check("no refresh, no mint, no store", count("refreshSession") === 0 && count("generateLink") === 0 && count("mcp_api_key_store_session") === 0);
   check("lease released", count("mcp_api_key_release_lease") === 1 && row!.lease === false);
+}
+
+// ── Sitzung gelöscht (globales Abmelden): session_id NULL → sofort neu ───
+console.log("session deleted → renew at once, not 403 until expiry");
+reset(freshRow({ expIn: 3600 }));
+row!.session_id = null;
+refreshOk = false;
+{
+  const info = await verifier().verify(KEY);
+  check("stale token not used", (info.extra as { supabaseAccessToken: string }).supabaseAccessToken === lastIssued!.at);
+  check("minted a new session", count("generateLink") === 1 && callOf("mcp_api_key_store_session") !== undefined);
 }
 
 // ── Lease-Gewinner: Refresh scheitert → neue Sitzung ─────────────────────

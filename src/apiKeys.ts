@@ -16,8 +16,8 @@ import { accessTokenClaims, mintRegisteredSession, type MintDeps, type Session }
 //   (Lease, `mcp_api_key_take_lease`): erst per Refresh, scheitert der (Token
 //   wegrotiert, Sitzung gelöscht, MCP_API_KEY gewechselt), mit einer frisch
 //   erzeugten, registrierten Sitzung (selbstheilend). Die anderen warten.
-// - Pro Instanz ein kleiner Cache (bis Ablauf − 120 s, höchstens 5 min) —
-//   ein Widerruf greift hier also spätestens nach 5 Minuten.
+// - Pro Instanz ein kleiner Cache (bis Ablauf − 120 s, höchstens 1 min) —
+//   ein Widerruf greift hier also spätestens nach einer Minute.
 // - Unbekannter oder widerrufener Key → InvalidTokenError (401). Störungen
 //   (Datenbank, Lease-Timeout, Mint gescheitert) → ApiKeyUnavailableError
 //   (ServerError → 500), **nie 401**: ein 401 ließe Clients ihre
@@ -34,7 +34,7 @@ export function isApiKey(token: string): boolean {
 export class ApiKeyUnavailableError extends ServerError {}
 
 const MIN_REMAINING_S = 120;
-const CACHE_MAX_MS = 5 * 60 * 1000;
+const CACHE_MAX_MS = 60 * 1000;
 const CACHE_MAX_ENTRIES = 50;
 const LEASE_S = 20;
 const WAIT_STEP_MS = 500;
@@ -107,8 +107,15 @@ export function createApiKeyVerifier(deps: ApiKeyDeps): ApiKeyVerifier {
   function usable(row: KeyRow): Usable | null {
     const s = opened(row);
     if (!s) return null;
-    const exp = accessTokenClaims(s.at)?.exp;
+    const claims = accessTokenClaims(s.at);
+    const exp = claims?.exp;
     if (!exp || exp - MIN_REMAINING_S <= now() / 1000) return null;
+    // Gehört das Token nicht (mehr) zur Sitzung der Zeile — etwa weil die
+    // Sitzung durch ein globales Abmelden gelöscht wurde (session_id → NULL) —,
+    // ließe die Datenbank es trotz gültiger Signatur nicht mehr durch (kein
+    // registriertes MCP-Token mehr → mfa_required). Dann sofort erneuern statt
+    // bis zum Ablauf mit 403 zu laufen.
+    if (!row.session_id || claims?.session_id !== row.session_id) return null;
     return { id: row.id, sub: s.sub, at: s.at, exp };
   }
 

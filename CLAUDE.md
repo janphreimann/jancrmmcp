@@ -293,9 +293,12 @@ diesem Präfix nach `src/apiKeys.ts`; der Key gilt auf `/mcp` und
   gescheitert → Sitzung abgemeldet, nichts gespeichert).
   `mcp_api_key_store_session` legt sie ab und löscht eine ersetzte alte
   Auth-Sitzung. Verlierer fragen alle 500 ms nach, höchstens 10 s.
-- **Cache.** Pro Instanz bis Ablauf − 120 s, höchstens 5 Minuten — ein
-  Widerruf greift im Server also spätestens nach 5 Minuten (die Datenbank
-  sperrt die gelöschte Sitzung bei MFA sofort).
+- **Cache.** Pro Instanz bis Ablauf − 120 s, höchstens 1 Minute — ein
+  Widerruf greift im Server also spätestens nach einer Minute (die Datenbank
+  sperrt die gelöschte Sitzung bei MFA sofort). Ein Token, dessen
+  `session_id` nicht (mehr) die der Zeile ist (Sitzung per globalem Abmelden
+  gelöscht → `session_id` NULL), gilt als unbrauchbar und wird sofort
+  erneuert.
 - **401 nur für unbekannte/widerrufene Keys.** Störungen (Datenbank, Lease-
   Timeout, Mint gescheitert) sind `ApiKeyUnavailableError` (`ServerError` →
   500): ein 401 ließe Clients ihre Zugangsdaten verwerfen oder einen
