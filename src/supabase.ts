@@ -14,7 +14,7 @@ export const supabaseAnonKey = SUPABASE_ANON_KEY;
 /**
  * service_role — RLS greift hier *nicht*.
  *
- * Zwei begründete Verwendungen, beide dort dokumentiert:
+ * Drei begründete Verwendungen, alle dort dokumentiert:
  * - `ctx.admin` in Tools, für die entschlüsselten CalDAV-Zugangsdaten aus dem
  *   Vault (`get_caldav_accounts`, siehe context.ts). Jede Abfrage darüber muss
  *   selbst auf `ctx.userId` filtern — service_role sieht jede Zeile, unabhängig
@@ -25,7 +25,10 @@ export const supabaseAnonKey = SUPABASE_ANON_KEY;
  *   Versand, keine wählbare Identität — `email` kommt aus `getUserById(user_id)`
  *   einer Zeile, deren `user_id` selbst nur aus `auth.uid()` gesetzt wurde).
  *   Gleich danach `register_mcp_session` (nur service_role), damit diese
- *   aal1-Sitzung trotz MFA des Owners zugelassen wird.
+ *   aal1-Sitzung trotz MFA des Owners zugelassen wird (mcpSession.ts).
+ * - API-Keys (`apiKeys.ts`): `mcp_api_key_*`-RPCs (nur service_role) zum
+ *   Auflösen des Key-Hashes und Ablegen der versiegelten Sitzung; erneuert
+ *   wird über dieselbe registrierte Sitzung wie beim Device-Code-Login.
  */
 export const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

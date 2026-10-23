@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import type { Request, Response } from "express";
 import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
@@ -6,44 +6,18 @@ import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextproto
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { InvalidClientMetadataError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { admin, anonClient } from "./supabase.js";
-import { ISSUER_URL } from "./issuer.js";
+import { keyMaterial, open, seal, sha256Hex } from "./seal.js";
+import { accessTokenClaims, mintRegisteredSession, type Session } from "./mcpSession.js";
+import { createApiKeyVerifier, isApiKey } from "./apiKeys.js";
 
 // ─── Token-Format ────────────────────────────────────────────────────────────
 //
-// Der Server hält keinen Zustand (Vercel, stateless) — alles, was er über eine
-// Sitzung weiß, steckt im Token selbst. Weil darin die Supabase-Sitzung des
-// Nutzers liegt (Access- und Refresh-Token), werden die Nutzlasten
-// *verschlüsselt* und nicht nur signiert: wer ein MCP-Token in die Hand
-// bekommt, soll daraus keine CRM-Sitzung herauslösen können. AES-256-GCM ist
-// zugleich authentifiziert, ersetzt die Signatur also mit.
+// Access-, Refresh-Token und Auth-Code sind versiegelte Nutzlasten (seal.ts,
+// AES-256-GCM): wer ein MCP-Token in die Hand bekommt, soll daraus keine
+// CRM-Sitzung herauslösen können.
 //
 // Die Client-Metadaten der Dynamic Client Registration sind dagegen öffentlich
 // und bleiben HMAC-signiert — sie stehen als client_id in jeder Anfrage.
-
-function keyMaterial(): Buffer {
-  if (!process.env.MCP_API_KEY) throw new Error("MCP_API_KEY must be set");
-  return createHash("sha256").update(process.env.MCP_API_KEY).digest();
-}
-
-function seal(payload: unknown): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", keyMaterial(), iv);
-  const body = Buffer.concat([cipher.update(JSON.stringify(payload), "utf8"), cipher.final()]);
-  return Buffer.concat([iv, cipher.getAuthTag(), body]).toString("base64url");
-}
-
-function open<T>(token: string): T | null {
-  try {
-    const raw = Buffer.from(token, "base64url");
-    if (raw.length < 29) return null;
-    const decipher = createDecipheriv("aes-256-gcm", keyMaterial(), raw.subarray(0, 12));
-    decipher.setAuthTag(raw.subarray(12, 28));
-    const plain = Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]);
-    return JSON.parse(plain.toString("utf8")) as T;
-  } catch {
-    return null;
-  }
-}
 
 function hmacSign(data: string): string {
   const sig = createHmac("sha256", keyMaterial()).update(data).digest("base64url");
@@ -63,10 +37,6 @@ function hmacVerify(token: string): string | null {
     return null;
   }
   return data;
-}
-
-function sha256Hex(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 // ─── Redirect-URI-Allowlist ──────────────────────────────────────────────────
@@ -121,30 +91,11 @@ function decodeClient(clientId: string): OAuthClientInformationFull | undefined 
 
 // ─── Nutzlasten ──────────────────────────────────────────────────────────────
 
-/** Supabase-Sitzung des angemeldeten Nutzers. */
-interface Session {
-  sub: string;   // Supabase-User-ID
-  at: string;    // Access-Token (JWT, ~1 h)
-  rt: string;    // Refresh-Token
-}
-
 interface CodePayload extends Session { t: "code"; c: string; ch: string; r: string; exp: number }
 interface AccessPayload extends Session { t: "token"; c: string; exp: number }
 interface RefreshPayload { t: "refresh"; c: string; sub: string; rt: string; exp: number }
 
 const REFRESH_TOKEN_TTL = 30 * 24 * 3600; // 30 Tage
-
-/** Claims des Supabase-Access-Tokens, ohne Prüfung der Signatur (die prüft Supabase). */
-function accessTokenClaims(supabaseAccessToken: string): { exp?: number; session_id?: string } | null {
-  try {
-    return JSON.parse(Buffer.from(supabaseAccessToken.split(".")[1], "base64url").toString()) as {
-      exp?: number;
-      session_id?: string;
-    };
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Laufzeit des Supabase-Access-Tokens aus dessen eigenem `exp` — das MCP-Token
@@ -325,6 +276,10 @@ function devicePendingPage(opts: { clientName?: string; code: string; secret: st
 </html>`;
 }
 
+// ─── API-Keys ────────────────────────────────────────────────────────────────
+
+const apiKeys = createApiKeyVerifier({ admin, anon: anonClient });
+
 // ─── OAuth Provider ───────────────────────────────────────────────────────────
 
 export const oauthProvider: OAuthServerProvider = {
@@ -419,6 +374,9 @@ export const oauthProvider: OAuthServerProvider = {
   },
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
+    // Feste API-Keys (`jcrm_…`, apiKeys.ts) statt OAuth — für Clients, die
+    // ihre OAuth-Tokens nicht erneuern (Claude Code).
+    if (isApiKey(token)) return apiKeys.verify(token);
     const parsed = open<AccessPayload>(token);
     if (!parsed || parsed.t !== "token") throw new InvalidTokenError("Invalid access token");
     if (Math.floor(Date.now() / 1000) > parsed.exp) throw new InvalidTokenError("Access token expired");
@@ -486,62 +444,23 @@ export async function handleDevicePoll(req: Request, res: Response): Promise<voi
   // müsste die Sitzung für tot erklären. generateLink + sofortiges
   // serverseitiges verifyOtp erzeugt stattdessen eine zweite, unabhängige
   // Session für denselben, bereits bestätigten Nutzer — ohne Mail-Versand,
-  // ohne geteiltes Token.
-  const { data: targetUser, error: targetUserError } = await admin.auth.admin.getUserById(row.user_id);
-  if (targetUserError || !targetUser.user?.email) {
-    res.status(401).json({ status: "expired", error: "Sitzung ist ungültig. Bitte fordere einen neuen Code an." });
-    return;
-  }
-
-  const { data: link, error: linkError } = await admin.auth.admin.generateLink({
-    type: "magiclink",
-    email: targetUser.user.email,
-  });
-  if (linkError || !link?.properties?.hashed_token) {
-    res.status(502).json({ status: "expired", error: "Verbindung konnte nicht abgeschlossen werden. Bitte fordere einen neuen Code an." });
-    return;
-  }
-
-  const { data: verified, error: verifyError } = await anonClient().auth.verifyOtp({
-    token_hash: link.properties.hashed_token,
-    type: "magiclink",
-  });
-  if (verifyError || !verified.session) {
-    res.status(401).json({ status: "expired", error: "Sitzung ist ungültig. Bitte fordere einen neuen Code an." });
-    return;
-  }
-
-  // Die frische Sitzung ist aal1 (nur Magic Link) — sobald der Owner einen
-  // zweiten Faktor eingerichtet hat, sähe sie im CRM nichts mehr. Die
-  // Freigabe in der Web-App verlangt bereits aal2 (claim_mcp_device_grant),
-  // also wird diese Sitzung hier als MCP-Sitzung registriert und damit
-  // zugelassen (Migration 20261107005700_owner_mfa.sql). Scheitert das,
-  // gibt es keine Tokens: eine nicht registrierte Sitzung wäre eine
-  // Verbindung, die in der Liste unter Settings → Security fehlt und sich
-  // nicht widerrufen lässt.
-  const sessionId = accessTokenClaims(verified.session.access_token)?.session_id;
+  // ohne geteiltes Token (mcpSession.ts, derselbe Weg wie bei den API-Keys).
+  // Fail closed: scheitert die Registrierung als MCP-Sitzung, gibt es keine
+  // Tokens.
   const clientName = decodeClient(row.client_id)?.client_name ?? null;
-  const { error: registerError } = sessionId
-    ? await admin.rpc("register_mcp_session", {
-        p_session_id: sessionId,
-        p_user_id: targetUser.user.id,
-        p_client_name: clientName,
-      })
-    : { error: new Error("access token without session_id") };
-  if (registerError) {
-    console.error("register_mcp_session failed", registerError);
-    // Die Sitzung nicht verwaist liegen lassen.
-    await admin.auth.admin.signOut(verified.session.access_token, "local").catch(() => undefined);
-    res.status(502).json({ status: "expired", error: "Verbindung konnte nicht abgeschlossen werden. Bitte fordere einen neuen Code an." });
+  const minted = await mintRegisteredSession({ admin, anon: anonClient }, row.user_id, clientName);
+  if (!minted.ok) {
+    const invalid = minted.reason === "user" || minted.reason === "verify";
+    res.status(invalid ? 401 : 502).json({
+      status: "expired",
+      error: invalid
+        ? "Sitzung ist ungültig. Bitte fordere einen neuen Code an."
+        : "Verbindung konnte nicht abgeschlossen werden. Bitte fordere einen neuen Code an.",
+    });
     return;
   }
 
-  const session: Session = {
-    sub: targetUser.user.id,
-    at: verified.session.access_token,
-    rt: verified.session.refresh_token,
-  };
-  const code = issueAuthCode(row.client_id, row.code_challenge, row.redirect_uri, session);
+  const code = issueAuthCode(row.client_id, row.code_challenge, row.redirect_uri, minted.session);
   const url = new URL(row.redirect_uri);
   url.searchParams.set("code", code);
   if (row.state) url.searchParams.set("state", row.state);
